@@ -1,5 +1,3 @@
-
-
 import express from 'express';
 import bodyParser from 'body-parser';
 import cors from 'cors';
@@ -242,6 +240,13 @@ const loadData = async () => {
             // --- ADVANCED ENTRY CONFIRMATION ---
             USE_MTF_VALIDATION: isNotFalse('USE_MTF_VALIDATION'),
             USE_OBV_VALIDATION: isNotFalse('USE_OBV_VALIDATION'),
+            
+            // --- PORTFOLIO INTELLIGENCE ---
+            SCALING_IN_ENABLED: isTrue('SCALING_IN_ENABLED'),
+            SCALING_IN_INITIAL_PCT: parseInt(process.env.SCALING_IN_INITIAL_PCT, 10) || 50,
+            SCALING_IN_ENTRIES: parseInt(process.env.SCALING_IN_ENTRIES, 10) || 2,
+            MAX_CORRELATED_TRADES: parseInt(process.env.MAX_CORRELATED_TRADES, 10) || 2,
+            USE_FEAR_AND_GREED_FILTER: isTrue('USE_FEAR_AND_GREED_FILTER'),
         };
         await saveData('settings');
     }
@@ -579,20 +584,6 @@ class RealtimeAnalyzer {
             checkGlobalSafetyRules();
         }
 
-        let tradeSettings = { ...botState.settings };
-        if (botState.settings.USE_DYNAMIC_PROFILE_SELECTOR) {
-            const pair = botState.scannerCache.find(p => p.symbol === symbol);
-            if(pair) {
-                if (pair.adx_15m !== undefined && pair.adx_15m < tradeSettings.ADX_THRESHOLD_RANGE) {
-                    tradeSettings = { ...tradeSettings, ...settingProfiles['Le Scalpeur'] };
-                } else if (pair.atr_pct_15m !== undefined && pair.atr_pct_15m > tradeSettings.ATR_PCT_THRESHOLD_VOLATILE) {
-                    tradeSettings = { ...tradeSettings, ...settingProfiles['Le Chasseur de Volatilité'] };
-                } else {
-                    tradeSettings = { ...tradeSettings, ...settingProfiles['Le Sniper'] };
-                }
-            }
-        }
-        
         log('BINANCE_WS', `[${interval} KLINE] Received for ${symbol}. Close: ${kline.close}`);
         if (!this.klineData.has(symbol) || !this.klineData.get(symbol).has(interval)) {
             this.hydrateSymbol(symbol, interval);
@@ -605,10 +596,34 @@ class RealtimeAnalyzer {
         
         if (interval === '15m') {
             this.analyze15mIndicators(symbol);
-        } else if (interval === '1m') {
-            this.checkFor1mTrigger(symbol, tradeSettings);
         } else if (interval === '5m') {
             this.validate5mConfirmation(symbol, kline);
+        } else if (interval === '1m') {
+            // Get correct settings profile for this specific moment
+            let tradeSettings = { ...botState.settings };
+            if (botState.settings.USE_DYNAMIC_PROFILE_SELECTOR) {
+                const pair = botState.scannerCache.find(p => p.symbol === symbol);
+                if(pair) {
+                    if (pair.adx_15m !== undefined && pair.adx_15m < tradeSettings.ADX_THRESHOLD_RANGE) {
+                        tradeSettings = { ...tradeSettings, ...settingProfiles['Le Scalpeur'] };
+                    } else if (pair.atr_pct_15m !== undefined && pair.atr_pct_15m > tradeSettings.ATR_PCT_THRESHOLD_VOLATILE) {
+                        tradeSettings = { ...tradeSettings, ...settingProfiles['Le Chasseur de Volatilité'] };
+                    } else {
+                        tradeSettings = { ...tradeSettings, ...settingProfiles['Le Sniper'] };
+                    }
+                }
+            }
+
+            // Check 1: Look for new trade triggers
+            this.checkFor1mTrigger(symbol, tradeSettings);
+
+            // Check 2: Look for scaling-in confirmations on existing trades
+            if (tradeSettings.SCALING_IN_ENABLED) {
+                const position = botState.activePositions.find(p => p.symbol === symbol && p.is_scaling_in);
+                if (position && kline.close > kline.open) { // Bullish confirmation candle
+                    tradingEngine.scaleInPosition(position, kline.close, tradeSettings);
+                }
+            }
         }
     }
 }
@@ -781,12 +796,13 @@ let botState = {
     hotlist: new Set(), // Symbols ready for 1m precision entry
     pendingConfirmation: new Map(), // symbol -> { triggerPrice, triggerTimestamp, slPriceReference, settings }
     priceCache: new Map(), // symbol -> { price: number }
-    circuitBreakerStatus: 'NONE', // NONE, WARNING_BTC_DROP, HALTED_BTC_DROP, HALTED_DRAWDOWN, PAUSED_LOSS_STREAK
+    circuitBreakerStatus: 'NONE', // NONE, WARNING_BTC_DROP, HALTED_BTC_DROP, HALTED_DRAWDOWN, PAUSED_LOSS_STREAK, PAUSED_EXTREME_SENTIMENT
     dayStartBalance: 10000,
     dailyPnl: 0,
     consecutiveLosses: 0,
     consecutiveWins: 0,
     currentTradingDay: new Date().toISOString().split('T')[0],
+    fearAndGreed: null,
 };
 
 const scanner = new ScannerService(log, KLINE_DATA_DIR);
@@ -876,6 +892,13 @@ const tradingEngine = {
             log('WARN', `Trade for ${pair.symbol} blocked: Global Circuit Breaker is active (${botState.circuitBreakerStatus}).`);
             return false;
         }
+
+        // --- Correlation Filter ---
+        const correlatedTrades = botState.activePositions.filter(p => p.symbol !== 'BTCUSDT' && p.symbol !== 'ETHUSDT').length;
+        if (correlatedTrades >= tradeSettings.MAX_CORRELATED_TRADES) {
+            log('TRADE', `[CORRELATION FILTER] Skipped trade for ${pair.symbol}. Max correlated trades (${tradeSettings.MAX_CORRELATED_TRADES}) reached.`);
+            return false;
+        }
         
         // --- RSI Safety Filter ---
         if (tradeSettings.USE_RSI_SAFETY_FILTER) {
@@ -935,7 +958,9 @@ const tradingEngine = {
             log('WARN', `[CIRCUIT BREAKER] WARNING ACTIVE. Reducing position size for ${pair.symbol} to $${positionSizeUSD.toFixed(2)}.`);
         }
 
-        const quantity = positionSizeUSD / entryPrice;
+        const target_quantity = positionSizeUSD / entryPrice;
+        const initial_quantity = tradeSettings.SCALING_IN_ENABLED ? (target_quantity * (tradeSettings.SCALING_IN_INITIAL_PCT / 100)) : target_quantity;
+        const initial_cost = initial_quantity * entryPrice;
 
         let stopLoss;
         if (tradeSettings.USE_ATR_STOP_LOSS && pair.atr_15m) {
@@ -958,8 +983,10 @@ const tradingEngine = {
             symbol: pair.symbol,
             side: 'BUY',
             entry_price: entryPrice,
-            quantity: quantity,
-            initial_quantity: quantity,
+            average_entry_price: entryPrice,
+            quantity: initial_quantity,
+            target_quantity: target_quantity,
+            total_cost_usd: initial_cost,
             stop_loss: stopLoss,
             initial_stop_loss: stopLoss, // Store initial SL for R calculation
             take_profit: takeProfit,
@@ -967,22 +994,63 @@ const tradingEngine = {
             entry_time: new Date().toISOString(),
             status: 'PENDING',
             entry_snapshot: { ...pair },
-            initial_risk_usd: positionSizeUSD * (tradeSettings.STOP_LOSS_PCT / 100),
             is_at_breakeven: false,
             partial_tp_hit: false,
             realized_pnl: 0,
             trailing_stop_tightened: false,
+            is_scaling_in: tradeSettings.SCALING_IN_ENABLED && tradeSettings.SCALING_IN_ENTRIES > 1,
+            current_entry_count: 1,
+            total_entries: tradeSettings.SCALING_IN_ENTRIES,
         };
 
-        log('TRADE', `>>> FIRING TRADE <<< Opening ${botState.tradingMode} trade for ${pair.symbol}: Qty=${quantity.toFixed(4)}, Entry=$${entryPrice}, SL=$${stopLoss.toFixed(4)}, TP=$${takeProfit.toFixed(4)}`);
+        log('TRADE', `>>> FIRING TRADE (ENTRY 1/${newTrade.total_entries}) <<< Opening ${botState.tradingMode} trade for ${pair.symbol}: Qty=${initial_quantity.toFixed(4)}, Entry=$${entryPrice}`);
         
         newTrade.status = 'FILLED'; // Simulate immediate fill
         botState.activePositions.push(newTrade);
-        botState.balance -= positionSizeUSD;
+        botState.balance -= initial_cost;
         
         saveData('state');
         broadcast({ type: 'POSITIONS_UPDATED' });
         return true;
+    },
+
+    scaleInPosition(position, newPrice, tradeSettings) {
+        const remainingEntries = position.total_entries - position.current_entry_count;
+        if (remainingEntries <= 0) return;
+
+        const remainingQty = position.target_quantity - position.quantity;
+        const chunkQty = remainingQty / remainingEntries;
+        const chunkCost = chunkQty * newPrice;
+
+        if (botState.balance < chunkCost) {
+            log('WARN', `[SCALING IN] Insufficient balance to scale in for ${position.symbol}.`);
+            position.is_scaling_in = false; // Stop trying to scale in
+            return;
+        }
+
+        const newTotalCost = position.total_cost_usd + chunkCost;
+        const newTotalQty = position.quantity + chunkQty;
+
+        position.average_entry_price = newTotalCost / newTotalQty;
+        position.quantity = newTotalQty;
+        position.total_cost_usd = newTotalCost;
+        position.current_entry_count++;
+        
+        botState.balance -= chunkCost;
+
+        // Recalculate Take Profit based on new average entry price
+        const riskPerUnit = position.average_entry_price - position.initial_stop_loss;
+        position.take_profit = position.average_entry_price + (riskPerUnit * tradeSettings.RISK_REWARD_RATIO);
+
+        log('TRADE', `[SCALING IN] Entry ${position.current_entry_count}/${position.total_entries} for ${position.symbol} at $${newPrice}. New Avg Price: $${position.average_entry_price.toFixed(4)}`);
+
+        if (position.current_entry_count >= position.total_entries) {
+            position.is_scaling_in = false;
+            log('TRADE', `[SCALING IN] Final entry for ${position.symbol} complete.`);
+        }
+
+        saveData('state');
+        broadcast({ type: 'POSITIONS_UPDATED' });
     },
 
     monitorAndManagePositions() {
@@ -1032,22 +1100,22 @@ const tradingEngine = {
             // --- R-Multiple Calculation ---
             let currentR = 0;
             if (pos.initial_stop_loss) {
-                const initialRiskPerUnit = pos.entry_price - pos.initial_stop_loss;
+                const initialRiskPerUnit = pos.average_entry_price - pos.initial_stop_loss;
                 if (initialRiskPerUnit > 0) {
-                    const currentProfitPerUnit = currentPrice - pos.entry_price;
+                    const currentProfitPerUnit = currentPrice - pos.average_entry_price;
                     currentR = currentProfitPerUnit / initialRiskPerUnit;
                 }
             }
 
             // --- Partial Take Profit (remains Pct-based as per current implementation) ---
-            const pnlPct = ((currentPrice - pos.entry_price) / pos.entry_price) * 100;
+            const pnlPct = ((currentPrice - pos.average_entry_price) / pos.average_entry_price) * 100;
             if (s.USE_PARTIAL_TAKE_PROFIT && !pos.partial_tp_hit && pnlPct >= s.PARTIAL_TP_TRIGGER_PCT) {
                 this.executePartialSell(pos, currentPrice);
             }
 
             // --- R-Based Auto Break-even ---
             if (s.USE_AUTO_BREAKEVEN && !pos.is_at_breakeven && currentR >= s.BREAKEVEN_TRIGGER_R) {
-                let newStopLoss = pos.entry_price;
+                let newStopLoss = pos.average_entry_price;
                 if (s.ADJUST_BREAKEVEN_FOR_FEES && s.TRANSACTION_FEE_PCT > 0) {
                     newStopLoss *= (1 + (s.TRANSACTION_FEE_PCT / 100) * 2);
                 }
@@ -1102,14 +1170,15 @@ const tradingEngine = {
         trade.exit_time = new Date().toISOString();
         trade.status = 'CLOSED';
 
-        const entryValue = trade.entry_price * trade.initial_quantity;
-        const exitValue = exitPrice * trade.initial_quantity;
-        const pnl = (exitValue - entryValue) + (trade.realized_pnl || 0);
+        const exitValue = exitPrice * trade.quantity;
+        const pnl = (trade.realized_pnl || 0) + exitValue - trade.total_cost_usd;
+        
+        const initialFullPositionValue = trade.average_entry_price * trade.target_quantity;
 
         trade.pnl = pnl;
-        trade.pnl_pct = (pnl / entryValue) * 100;
+        trade.pnl_pct = (pnl / initialFullPositionValue) * 100;
 
-        botState.balance += entryValue + pnl;
+        botState.balance += trade.total_cost_usd + pnl;
         
         // --- Daily Stats Update ---
         const today = new Date().toISOString().split('T')[0];
@@ -1157,10 +1226,12 @@ const tradingEngine = {
     
     executePartialSell(position, currentPrice) {
         const s = botState.settings;
-        const sellQty = position.initial_quantity * (s.PARTIAL_TP_SELL_QTY_PCT / 100);
-        const pnlFromSale = (currentPrice - position.entry_price) * sellQty;
+        const initialQty = position.target_quantity;
+        const sellQty = initialQty * (s.PARTIAL_TP_SELL_QTY_PCT / 100);
+        const pnlFromSale = (currentPrice - position.average_entry_price) * sellQty;
 
         position.quantity -= sellQty;
+        position.total_cost_usd -= position.average_entry_price * sellQty;
         position.realized_pnl = (position.realized_pnl || 0) + pnlFromSale;
         position.partial_tp_hit = true;
         
@@ -1184,14 +1255,22 @@ const checkGlobalSafetyRules = () => {
         newStatus = 'HALTED_DRAWDOWN';
         statusReason = `Daily drawdown limit of -$${drawdownLimitUSD.toFixed(2)} reached. Trading halted for the day.`;
     }
-
     // Rule 2: Consecutive Loss Limit (Pause)
     else if (botState.consecutiveLosses >= s.CONSECUTIVE_LOSS_LIMIT) {
         newStatus = 'PAUSED_LOSS_STREAK';
         statusReason = `${s.CONSECUTIVE_LOSS_LIMIT} consecutive losses reached. Trading is paused.`;
     }
-
-    // Rule 3: BTC Price Drop (Existing logic)
+    // Rule 3: Extreme Market Sentiment (Pause)
+    else if (s.USE_FEAR_AND_GREED_FILTER && botState.fearAndGreed) {
+        if (botState.fearAndGreed.value <= 15 || botState.fearAndGreed.value >= 85) {
+            newStatus = 'PAUSED_EXTREME_SENTIMENT';
+            statusReason = `Extreme market sentiment detected (F&G: ${botState.fearAndGreed.value}). Trading paused.`;
+        } else if (newStatus === 'PAUSED_EXTREME_SENTIMENT') {
+            newStatus = 'NONE';
+            statusReason = 'Market sentiment has returned to normal levels.';
+        }
+    }
+    // Rule 4: BTC Price Drop (Existing logic)
     // Only check this if no other halt/pause is active yet from this check
     else {
         const btcKlines1m = realtimeAnalyzer.klineData.get('BTCUSDT')?.get('1m');
@@ -1238,6 +1317,29 @@ const checkGlobalSafetyRules = () => {
     }
 };
 
+const fetchFearAndGreedIndex = async () => {
+    try {
+        const response = await fetch('https://api.alternative.me/fng/?limit=1');
+        if (!response.ok) {
+            throw new Error(`API returned status ${response.status}`);
+        }
+        const data = await response.json();
+        if (data && data.data && data.data.length > 0) {
+            const fng = data.data[0];
+            const fngData = {
+                value: parseInt(fng.value, 10),
+                classification: fng.value_classification,
+            };
+            botState.fearAndGreed = fngData;
+            broadcast({ type: 'FEAR_AND_GREED_UPDATE', payload: fngData });
+            // After updating, check the rules
+            checkGlobalSafetyRules();
+        }
+    } catch (error) {
+        log('ERROR', `Failed to fetch Fear & Greed Index: ${error.message}`);
+    }
+};
+
 // --- Main Application Loop ---
 const startBot = () => {
     if (scannerInterval) clearInterval(scannerInterval);
@@ -1252,6 +1354,10 @@ const startBot = () => {
         }
     }, 1000); // Manage positions every second for high-frequency checks
     
+    // Fetch Fear & Greed index periodically
+    fetchFearAndGreedIndex();
+    setInterval(fetchFearAndGreedIndex, 15 * 60 * 1000); // Every 15 minutes
+
     connectToBinanceStreams();
     log('INFO', 'Bot started. Initializing scanner and position manager...');
 };
@@ -1369,10 +1475,12 @@ app.get('/api/positions', requireAuth, (req, res) => {
     // Augment positions with current price from scanner cache for frontend display
     const augmentedPositions = botState.activePositions.map(pos => {
         const priceData = botState.priceCache.get(pos.symbol);
-        const currentPrice = priceData ? priceData.price : pos.entry_price;
-        const pnl = (currentPrice - pos.entry_price) * pos.quantity;
-        const entryValue = pos.entry_price * pos.quantity;
-        const pnl_pct = entryValue > 0 ? (pnl / entryValue) * 100 : 0;
+        const currentPrice = priceData ? priceData.price : pos.average_entry_price;
+        const current_value = currentPrice * pos.quantity;
+        const pnl = (pos.realized_pnl || 0) + current_value - pos.total_cost_usd;
+        
+        const initialFullPositionValue = pos.average_entry_price * pos.target_quantity;
+        const pnl_pct = initialFullPositionValue > 0 ? (pnl / initialFullPositionValue) * 100 : 0;
 
         return {
             ...pos,
@@ -1418,7 +1526,7 @@ app.post('/api/close-trade/:id', requireAuth, (req, res) => {
     if (!trade) return res.status(404).json({ message: 'Trade not found.' });
 
     const priceData = botState.priceCache.get(trade.symbol);
-    const exitPrice = priceData ? priceData.price : trade.entry_price;
+    const exitPrice = priceData ? priceData.price : trade.average_entry_price;
 
     const closedTrade = tradingEngine.closeTrade(tradeId, exitPrice, 'Manual Close');
     if (closedTrade) {

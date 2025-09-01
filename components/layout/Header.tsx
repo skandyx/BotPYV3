@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -39,6 +38,10 @@ const circuitBreakerMessages: Partial<Record<CircuitBreakerStatus, { className: 
     PAUSED_LOSS_STREAK: {
         className: 'bg-orange-600 text-white',
         text: 'PAUSE (SÉRIE DE PERTES) : Trading suspendu temporairement après une série de pertes.',
+    },
+    PAUSED_EXTREME_SENTIMENT: {
+        className: 'bg-orange-600 text-white',
+        text: 'PAUSE (SENTIMENT EXTRÊME) : Trading suspendu en raison de la volatilité du sentiment de marché.',
     },
 };
 

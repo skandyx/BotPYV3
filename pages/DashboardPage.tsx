@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
 import { api } from '../services/mockApi';
@@ -66,9 +65,18 @@ const ActivePositionsTable: React.FC<{ positions: Trade[], onManualClose: (trade
                                 onClick={() => onSymbolClick(pos.symbol)}
                                 className="hover:bg-[#2b2f38]/50 cursor-pointer transition-colors"
                             >
-                                <td className="px-3 lg:px-6 py-4 whitespace-nowrap text-sm font-medium text-white">{pos.symbol}</td>
+                                <td className="px-3 lg:px-6 py-4 whitespace-nowrap text-sm font-medium text-white">
+                                    <div className="flex items-center">
+                                        <span>{pos.symbol}</span>
+                                        {pos.is_scaling_in && (
+                                            <span className="ml-2 text-xs font-semibold bg-sky-700 text-sky-200 px-2 py-0.5 rounded-full animate-pulse">
+                                                Scaling In...
+                                            </span>
+                                        )}
+                                    </div>
+                                </td>
                                 <td className={`px-3 lg:px-6 py-4 whitespace-nowrap text-sm font-bold ${getSideClass(pos.side)}`}>{pos.side}</td>
-                                <td className="px-3 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-300">${formatPrice(pos.entry_price)}</td>
+                                <td className="px-3 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-300">${formatPrice(pos.average_entry_price)}</td>
                                 <td className={`px-3 lg:px-6 py-4 whitespace-nowrap text-sm font-mono transition-colors duration-200 ${priceClass}`}>${formatPrice(pos.current_price || pos.entry_price)}</td>
                                 <td className="px-3 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-300">{pos.quantity.toFixed(4)}</td>
                                 <td className="px-3 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-300">${formatPrice(pos.stop_loss)}</td>
@@ -117,7 +125,7 @@ const DashboardPage: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [isCloseModalOpen, setIsCloseModalOpen] = useState(false);
     const [tradeToClose, setTradeToClose] = useState<Trade | null>(null);
-    const { tradeActivityCounter } = useAppContext();
+    const { tradeActivityCounter, fearAndGreed } = useAppContext();
     const { tradingMode } = useBotState();
     const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
 
@@ -240,17 +248,31 @@ const DashboardPage: React.FC = () => {
             case TradingMode.REAL_LIVE: return 'Réel (Live)';
         }
     };
+    
+    const getSentimentColor = (value: number) => {
+        if (value < 25) return 'text-red-400';
+        if (value < 45) return 'text-orange-400';
+        if (value < 55) return 'text-yellow-400';
+        if (value < 75) return 'text-green-400';
+        return 'text-emerald-400';
+    };
 
     const totalPnlClass = stats.total_pnl > 0 ? 'text-green-400' : stats.total_pnl < 0 ? 'text-red-400' : 'text-gray-100';
 
     return (
         <>
         <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
                 <StatCard title="Solde" value={`$${status.balance.toFixed(2)}`} subtitle={getModeLabel(status.mode)} />
                 <StatCard title="Positions Ouvertes" value={status.positions} subtitle={`Max: ${status.max_open_positions}`} />
                 <StatCard title="PnL Total" value={`$${stats.total_pnl.toFixed(2)}`} subtitle={`Taux de Victoire: ${stats.win_rate.toFixed(1)}%`} valueClassName={totalPnlClass} />
                 <StatCard title="Paires Suivies" value={status.monitored_pairs} subtitle={`Volume > $${(settings.MIN_VOLUME_USD / 1000000).toFixed(0)}M`} />
+                <StatCard 
+                    title="Fear & Greed Index" 
+                    value={fearAndGreed?.value ?? '...'} 
+                    subtitle={fearAndGreed?.classification ?? 'Chargement...'} 
+                    valueClassName={fearAndGreed ? getSentimentColor(fearAndGreed.value) : ''} 
+                />
             </div>
 
             {selectedSymbol && (

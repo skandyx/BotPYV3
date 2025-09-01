@@ -93,6 +93,18 @@ TRAILING_STOP_TIGHTEN_THRESHOLD_R=1.0
 # La valeur de réduction du multiplicateur ATR après resserrement.
 TRAILING_STOP_TIGHTEN_MULTIPLIER_REDUCTION=0.3
 
+# --- PORTFOLIO INTELLIGENCE ---
+# Activer les entrées fractionnées. (true/false)
+SCALING_IN_ENABLED=true
+# Pourcentage de la taille de position à engager sur la première entrée.
+SCALING_IN_INITIAL_PCT=50
+# Nombre total d'entrées pour construire la position.
+SCALING_IN_ENTRIES=2
+# Nombre maximum de trades sur altcoins ouverts en même temps.
+MAX_CORRELATED_TRADES=2
+# Activer la pause automatique en cas de sentiment de marché extrême. (true/false)
+USE_FEAR_AND_GREED_FILTER=true
+
 # --- GLOBAL SAFETY ---
 # Pourcentage de chute de BTC sur 5 minutes pour déclencher une alerte.
 CIRCUIT_BREAKER_WARN_THRESHOLD_PCT=1.5

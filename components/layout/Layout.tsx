@@ -1,4 +1,3 @@
-
 import React, { useEffect } from 'react';
 import Sidebar from './Sidebar';
 import Header from './Header';
@@ -15,7 +14,7 @@ import { useSidebar } from '../../contexts/SidebarContext';
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { setConnectionStatus } = useWebSocket();
   const { isAuthenticated } = useAuth();
-  const { settingsActivityCounter, refreshData, setSettings, setCircuitBreakerStatus } = useAppContext();
+  const { settingsActivityCounter, refreshData, setSettings, setCircuitBreakerStatus, setFearAndGreed } = useAppContext();
   const { isCollapsed, isMobileOpen, setMobileOpen } = useSidebar();
 
   useEffect(() => {
@@ -24,6 +23,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         websocketService.onStatusChange(setConnectionStatus);
         websocketService.onDataRefresh(refreshData);
         websocketService.onCircuitBreakerUpdate((payload) => setCircuitBreakerStatus(payload.status));
+        websocketService.onFearAndGreedUpdate(setFearAndGreed);
         websocketService.connect();
         
         const initializeAndFetchData = async () => {
@@ -53,8 +53,9 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
       websocketService.onStatusChange(null);
       websocketService.onDataRefresh(null);
       websocketService.onCircuitBreakerUpdate(null);
+      websocketService.onFearAndGreedUpdate(null);
     };
-  }, [isAuthenticated, setConnectionStatus, settingsActivityCounter, refreshData, setSettings, setCircuitBreakerStatus]);
+  }, [isAuthenticated, setConnectionStatus, settingsActivityCounter, refreshData, setSettings, setCircuitBreakerStatus, setFearAndGreed]);
 
   return (
     <div className="flex h-screen bg-[#0c0e12] overflow-hidden">

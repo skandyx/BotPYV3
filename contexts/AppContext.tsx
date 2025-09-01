@@ -2,7 +2,7 @@ import React, { createContext, useState, useContext, ReactNode, useCallback } fr
 import { api } from '../services/mockApi';
 import { positionService } from '../services/positionService';
 import { logService } from '../services/logService';
-import { BotSettings, CircuitBreakerStatus } from '../types';
+import { BotSettings, CircuitBreakerStatus, FearAndGreed } from '../types';
 
 interface AppContextType {
   tradeActivityCounter: number;
@@ -13,6 +13,8 @@ interface AppContextType {
   setSettings: React.Dispatch<React.SetStateAction<BotSettings | null>>;
   circuitBreakerStatus: CircuitBreakerStatus;
   setCircuitBreakerStatus: React.Dispatch<React.SetStateAction<CircuitBreakerStatus>>;
+  fearAndGreed: FearAndGreed | null;
+  setFearAndGreed: React.Dispatch<React.SetStateAction<FearAndGreed | null>>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -22,6 +24,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [settingsActivityCounter, setSettingsActivityCounter] = useState(0);
   const [settings, setSettings] = useState<BotSettings | null>(null);
   const [circuitBreakerStatus, setCircuitBreakerStatus] = useState<CircuitBreakerStatus>('NONE');
+  const [fearAndGreed, setFearAndGreed] = useState<FearAndGreed | null>(null);
 
   const refreshData = useCallback(async () => {
     logService.log('INFO', 'WebSocket triggered position refresh. Fetching fresh data...');
@@ -39,7 +42,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, []);
 
   return (
-    <AppContext.Provider value={{ tradeActivityCounter, refreshData, settingsActivityCounter, incrementSettingsActivity, settings, setSettings, circuitBreakerStatus, setCircuitBreakerStatus }}>
+    <AppContext.Provider value={{ 
+        tradeActivityCounter, refreshData, 
+        settingsActivityCounter, incrementSettingsActivity, 
+        settings, setSettings, 
+        circuitBreakerStatus, setCircuitBreakerStatus,
+        fearAndGreed, setFearAndGreed
+    }}>
       {children}
     </AppContext.Provider>
   );

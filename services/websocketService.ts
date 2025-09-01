@@ -1,8 +1,6 @@
-
-import { WebSocketStatus, LogEntry, CircuitBreakerStatus } from '../types';
+import { WebSocketStatus, LogEntry, CircuitBreakerStatus, FearAndGreed } from '../types';
 import { logService } from './logService';
 import { priceStore } from './priceStore';
-import { positionService } from './positionService';
 import { scannerStore } from './scannerStore';
 
 export interface PriceUpdate {
@@ -13,11 +11,13 @@ export interface PriceUpdate {
 type StatusChangeCallback = (status: WebSocketStatus) => void;
 type DataRefreshCallback = () => void;
 type CircuitBreakerCallback = (payload: { status: CircuitBreakerStatus }) => void;
+type FearAndGreedCallback = (payload: FearAndGreed) => void;
 
 let socket: WebSocket | null = null;
 let statusCallback: StatusChangeCallback | null = null;
 let dataRefreshCallback: DataRefreshCallback | null = null;
 let circuitBreakerCallback: CircuitBreakerCallback | null = null;
+let fearAndGreedCallback: FearAndGreedCallback | null = null;
 let reconnectTimeout: number | null = null;
 let isManualDisconnect = false;
 
@@ -72,6 +72,9 @@ const connect = () => {
                     logService.log('WARN', `Circuit breaker status updated: ${JSON.stringify(message.payload)}`);
                     circuitBreakerCallback?.(message.payload);
                     break;
+                case 'FEAR_AND_GREED_UPDATE':
+                    fearAndGreedCallback?.(message.payload);
+                    break;
                 case 'BOT_STATUS_UPDATE':
                     logService.log('INFO', `Bot running state is now: ${message.payload.isRunning}`);
                     break;
@@ -125,5 +128,8 @@ export const websocketService = {
     },
     onCircuitBreakerUpdate: (callback: CircuitBreakerCallback | null) => {
         circuitBreakerCallback = callback;
+    },
+    onFearAndGreedUpdate: (callback: FearAndGreedCallback | null) => {
+        fearAndGreedCallback = callback;
     }
 };

@@ -131,7 +131,12 @@ const tooltips: Record<string, string> = {
     DAILY_DRAWDOWN_LIMIT_PCT: "Le risque maximum sur le capital par jour. Si les pertes de la journée dépassent ce pourcentage du solde initial, le bot s'arrête jusqu'au lendemain.",
     CONSECUTIVE_LOSS_LIMIT: "Le nombre maximum de pertes consécutives autorisées. Si cette limite est atteinte, le bot se met en pause pour éviter de trader dans de mauvaises conditions de marché.",
     USE_MTF_VALIDATION: "Validation Multi-Temporelle : Après un signal 1m, attendre la clôture d'une bougie 5m haussière pour confirmer le breakout avant d'entrer. Réduit considérablement les fausses cassures.",
-    USE_OBV_VALIDATION: "Confirmation par Volume (OBV) : Exiger que l'indicateur On-Balance Volume (1m) soit en hausse lors du signal de breakout. Confirme que le volume acheteur réel soutient le mouvement."
+    USE_OBV_VALIDATION: "Confirmation par Volume (OBV) : Exiger que l'indicateur On-Balance Volume (1m) soit en hausse lors du signal de breakout. Confirme que le volume acheteur réel soutient le mouvement.",
+    SCALING_IN_ENABLED: "Activer les entrées fractionnées (Scaling-In) pour réduire le risque sur les faux signaux en n'engageant pas 100% de la position immédiatement.",
+    SCALING_IN_INITIAL_PCT: "Le pourcentage de la taille totale de la position à engager lors de la première entrée (ex: 50 pour 50%).",
+    SCALING_IN_ENTRIES: "Le nombre total d'entrées pour construire la position complète (ex: 2 signifie une entrée initiale et un renforcement).",
+    MAX_CORRELATED_TRADES: "Le nombre maximum de trades sur des altcoins (corrélés à BTC) autorisés à être ouverts simultanément pour éviter une surexposition.",
+    USE_FEAR_AND_GREED_FILTER: "Activer le mode 'Risk-Off' automatique. Le bot se mettra en pause si le sentiment du marché devient extrême (peur ou euphorie), selon l'indice Fear & Greed."
 };
 
 const inputClass = "mt-1 block w-full rounded-md border-[#3e4451] bg-[#0c0e12] shadow-sm focus:border-[#f0b90b] focus:ring-[#f0b90b] sm:text-sm text-white";
@@ -450,6 +455,20 @@ const SettingsPage: React.FC = () => {
                              <InputField id="ATR_PCT_THRESHOLD_VOLATILE" label="Seuil ATR % (Marché Volatil)" step="0.1" />
                         </div>
                     </div>
+
+                    {/* Portfolio Intelligence */}
+                    <div className="bg-[#14181f]/50 border border-[#2b2f38] rounded-lg p-6 shadow-lg">
+                        <h3 className="text-lg font-semibold text-white mb-4">Intelligence de Portefeuille</h3>
+                        <div className="space-y-4">
+                           <ToggleField id="SCALING_IN_ENABLED" label="Activer les Entrées Fractionnées" />
+                           <div className={`grid grid-cols-2 gap-4 transition-opacity ${settings.SCALING_IN_ENABLED ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <InputField id="SCALING_IN_INITIAL_PCT" label="Entrée Initiale (%)" />
+                               <InputField id="SCALING_IN_ENTRIES" label="Nombre d'Entrées" />
+                           </div>
+                           <hr className="border-gray-700"/>
+                           <InputField id="MAX_CORRELATED_TRADES" label="Max Trades Corrélés Simultanés"/>
+                        </div>
+                    </div>
                 </div>
 
                 {/* Right Column */}
@@ -557,7 +576,9 @@ const SettingsPage: React.FC = () => {
                                 <InputField id="DAILY_DRAWDOWN_LIMIT_PCT" label="Limite Drawdown Journalier (%)" step="0.1" />
                                 <InputField id="CONSECUTIVE_LOSS_LIMIT" label="Limite Pertes Consécutives" />
                              </div>
-                             <hr className="border-gray-700 my-4"/>
+                             <hr className="border-gray-700 my-2"/>
+                              <ToggleField id="USE_FEAR_AND_GREED_FILTER" label="Filtre Risk-Off (Fear & Greed)" />
+                             <hr className="border-gray-700 my-2"/>
                              <div>
                                  <label htmlFor="newPassword" className="text-sm font-medium text-gray-300">Nouveau Mot de Passe</label>
                                  <input type="password" id="newPassword" value={newPassword} onChange={e => setNewPassword(e.target.value)} className={inputClass} placeholder="Au moins 8 caractères"/>

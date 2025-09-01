@@ -22,18 +22,25 @@ export enum WebSocketStatus {
     DISCONNECTED = "DISCONNECTED",
 }
 
-export type CircuitBreakerStatus = 'NONE' | 'WARNING_BTC_DROP' | 'HALTED_BTC_DROP' | 'HALTED_DRAWDOWN' | 'PAUSED_LOSS_STREAK';
+export type CircuitBreakerStatus = 'NONE' | 'WARNING_BTC_DROP' | 'HALTED_BTC_DROP' | 'HALTED_DRAWDOWN' | 'PAUSED_LOSS_STREAK' | 'PAUSED_EXTREME_SENTIMENT';
+
+export interface FearAndGreed {
+    value: number;
+    classification: string;
+}
 
 export interface Trade {
   id: number;
   mode: TradingMode;
   symbol: string;
   side: OrderSide;
-  entry_price: number;
+  entry_price: number; // For display, the first entry price
+  average_entry_price: number; // For PnL calculation
   current_price?: number;
   priceDirection?: 'up' | 'down' | 'neutral';
   exit_price?: number;
-  quantity: number;
+  quantity: number; // Current quantity held
+  target_quantity: number; // Final planned quantity
   initial_quantity?: number; // For tracking partial sells
   stop_loss: number;
   initial_stop_loss?: number; // For adaptive R-based trailing stop
@@ -50,6 +57,10 @@ export interface Trade {
   realized_pnl?: number; // For tracking profit from partial sells
   entry_snapshot?: ScannedPair; // Capture scanner state at entry
   trailing_stop_tightened?: boolean; // For adaptive trailing stop logic
+  total_cost_usd: number;
+  is_scaling_in?: boolean;
+  current_entry_count?: number;
+  total_entries?: number;
 }
 
 export interface StrategyConditions {
@@ -191,4 +202,11 @@ export interface BotSettings {
     // --- ADVANCED ENTRY CONFIRMATION ---
     USE_MTF_VALIDATION: boolean;
     USE_OBV_VALIDATION: boolean;
+
+    // --- PORTFOLIO INTELLIGENCE ---
+    SCALING_IN_ENABLED: boolean;
+    SCALING_IN_INITIAL_PCT: number;
+    SCALING_IN_ENTRIES: number;
+    MAX_CORRELATED_TRADES: number;
+    USE_FEAR_AND_GREED_FILTER: boolean;
 }
