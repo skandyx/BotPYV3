@@ -528,8 +528,8 @@ class RealtimeAnalyzer {
         
         if (tradeSettings.USE_WHALE_MANIPULATION_FILTER) {
             const last60mVolumes = volumes1m.slice(-61, -1);
-            const hourlyAvgVolume = last60mVolumes.reduce((sum, v) => sum + v, 0) / 60;
-            const thresholdVolume = hourlyAvgVolume * (tradeSettings.WHALE_SPIKE_THRESHOLD_PCT / 100);
+            const totalHourlyVolume = last60mVolumes.reduce((sum, v) => sum + v, 0);
+            const thresholdVolume = totalHourlyVolume * (tradeSettings.WHALE_SPIKE_THRESHOLD_PCT / 100);
             if (triggerCandle.volume > thresholdVolume) {
                 log('TRADE', `[WHALE FILTER] Rejected ${symbol}. 1m volume (${triggerCandle.volume.toFixed(0)}) exceeded threshold (${thresholdVolume.toFixed(0)}).`);
                 return;

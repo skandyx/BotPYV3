@@ -127,7 +127,7 @@ Ces règles de sécurité ont la priorité sur toutes les stratégies d'entrée.
 
 *   **1. Filtre de Liquidité (Carnet d'Ordres)** : Avant tout trade, le bot vérifie qu'il y a suffisamment de liquidité dans le carnet d'ordres pour éviter le slippage.
 
-*   **2. Détection de Manipulation ("Filtre Anti-Baleine")** : Si une bougie de 1 minute montre un volume anormalement explosif (ex: >5% du volume horaire moyen), le signal est ignoré pour éviter les pièges.
+*   **2. Détection de Manipulation ("Filtre Anti-Baleine")** : Si le volume d'une seule bougie de 1 minute est anormalement élevé (ex: il représente plus de 5% du volume total échangé sur l'heure précédente), le signal est ignoré pour éviter les pièges de liquidité.
 
 *   **3. Gestion de Corrélation par Secteur** : Pour éviter la surexposition, le bot n'ouvrira qu'un seul trade à la fois par "secteur" crypto (ex: un seul L1, un seul L2, etc.).
 

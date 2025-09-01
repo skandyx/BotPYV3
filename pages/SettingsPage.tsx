@@ -139,7 +139,7 @@ const tooltips: Record<string, string> = {
     MIN_ORDER_BOOK_LIQUIDITY_USD: "La quantité minimale de liquidité (en USD) qui doit être disponible dans ±0.5% du prix actuel pour que le trade soit autorisé.",
     USE_SECTOR_CORRELATION_FILTER: "Empêcher d'ouvrir des trades sur plusieurs actifs du même secteur (ex: L1, L2, DeFi) simultanément pour améliorer la diversification.",
     USE_WHALE_MANIPULATION_FILTER: "Détecter et ignorer les signaux d'entrée causés par des pics de volume anormaux sur une seule bougie, qui sont souvent des pièges.",
-    WHALE_SPIKE_THRESHOLD_PCT: "Le pourcentage du volume horaire moyen. Si une bougie de 1 minute dépasse ce seuil (ex: 5%), le signal est considéré comme une manipulation.",
+    WHALE_SPIKE_THRESHOLD_PCT: "Le pourcentage du volume total de la dernière heure. Si le volume d'une seule bougie de 1 minute dépasse ce seuil (ex: 5% du volume total des 60 dernières minutes), le signal est considéré comme une manipulation et est ignoré.",
     USE_RSI_MTF_FILTER: "Filtre de Sécurité RSI Multi-Temporel : Vérifie que le RSI sur 15 minutes n'est pas déjà en zone de surchauffe, pour éviter les entrées tardives.",
     RSI_15M_OVERBOUGHT_THRESHOLD: "Le seuil RSI sur 15 minutes au-delà duquel un signal d'achat sera ignoré.",
     USE_WICK_DETECTION_FILTER: "Filtre Anti-Piège : rejette les signaux d'entrée si la bougie de déclenchement a une mèche supérieure anormalement grande, indiquant un rejet du prix.",
