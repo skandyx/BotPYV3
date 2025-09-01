@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { logService } from '../services/logService';
 import { LogEntry, LOG_LEVELS, LogTab } from '../types';
 
@@ -8,17 +8,36 @@ const ConsolePage: React.FC = () => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [activeTab, setActiveTab] = useState<LogTab>('ALL');
   const logContainerRef = useRef<HTMLDivElement>(null);
+  const shouldScrollRef = useRef(true);
+
+  // Add scroll listener to detect if user has scrolled up
+  useEffect(() => {
+    const container = logContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      // If user is within 5px of the bottom, consider them "at the bottom"
+      const atBottom = scrollHeight - scrollTop - clientHeight < 5;
+      shouldScrollRef.current = atBottom;
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, []);
 
   // Effect to reload logs from the service when the active tab changes.
   useEffect(() => {
     setLogs(logService.getLogs(activeTab));
+    // When tab changes, we always want to scroll to the bottom of the new log list
+    shouldScrollRef.current = true;
   }, [activeTab]);
 
-  // Effect to handle live log updates. It re-subscribes when the active tab
-  // changes to ensure the closure captures the correct `activeTab` value.
+  // Effect to handle live log updates.
   useEffect(() => {
     const handleNewLog = (newLog: LogEntry) => {
       if (activeTab === 'ALL' || activeTab === newLog.level) {
+        // We use a functional update to get the latest state
         setLogs(prevLogs => [...prevLogs.slice(-999), newLog]);
       }
     };
@@ -30,12 +49,12 @@ const ConsolePage: React.FC = () => {
     };
   }, [activeTab]);
 
-  // Effect to scroll to the top to show the latest log first
-  useEffect(() => {
-    if (logContainerRef.current) {
-      logContainerRef.current.scrollTop = 0;
+  // useLayoutEffect ensures scrolling happens after the DOM is updated but before paint
+  useLayoutEffect(() => {
+    if (shouldScrollRef.current && logContainerRef.current) {
+      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
     }
-  }, [logs, activeTab]);
+  }, [logs]); // This effect runs whenever logs are updated
 
   const getLogLevelClass = (level: LogEntry['level']) => {
     switch (level) {
@@ -51,10 +70,6 @@ const ConsolePage: React.FC = () => {
       default: return 'text-gray-400';
     }
   };
-
-  // The filtering is now implicitly handled by the state `logs` which is
-  // loaded based on the active tab.
-  const displayedLogs = logs;
 
   const timestampFormatOptions: Intl.DateTimeFormatOptions = {
     year: 'numeric',
@@ -90,7 +105,7 @@ const ConsolePage: React.FC = () => {
               className="flex-grow p-4 overflow-y-auto font-spacemono text-sm"
               style={{ maxHeight: 'calc(100vh - 18rem)' }}
           >
-              {displayedLogs.slice().reverse().map((log, index) => (
+              {logs.map((log, index) => (
                   <div key={index} className="flex">
                       <span className="text-gray-500 mr-4 whitespace-nowrap">
                         {new Date(log.timestamp).toLocaleString(undefined, timestampFormatOptions)}
