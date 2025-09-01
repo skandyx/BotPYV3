@@ -72,7 +72,6 @@ const Dot: React.FC<{ active: boolean; tooltip: string }> = ({ active, tooltip }
 
 const ConditionDots: React.FC<{ conditions?: StrategyConditions }> = ({ conditions }) => {
     const conditionTooltips = {
-        trend: 'Tendance 4h (Prix > EMA50)',
         squeeze: 'Compression 15m (BB Squeeze)',
         breakout: 'Cassure 1m (Clôture > EMA9)',
         volume: 'Volume 1m (Volume > 1.5x Moyenne)',
@@ -83,7 +82,6 @@ const ConditionDots: React.FC<{ conditions?: StrategyConditions }> = ({ conditio
 
     return (
         <div className="flex items-center space-x-2">
-            <Dot active={conditions?.trend ?? false} tooltip={conditionTooltips.trend} />
             <Dot active={conditions?.squeeze ?? false} tooltip={conditionTooltips.squeeze} />
             <Dot active={conditions?.breakout ?? false} tooltip={conditionTooltips.breakout} />
             <Dot active={conditions?.volume ?? false} tooltip={conditionTooltips.volume} />
@@ -190,6 +188,13 @@ const ScannerPage: React.FC = () => {
     return 'text-gray-500';
   };
 
+  const getTrendScoreColorClass = (score?: number): string => {
+    if (score === undefined || score === null) return 'text-gray-500';
+    if (score > 75) return 'text-green-400';
+    if (score > 50) return 'text-yellow-400';
+    return 'text-red-400';
+  };
+
   const getRsiColorClass = (rsi?: number): string => {
     if (!rsi || !settings) return 'text-gray-500';
     const threshold = settings.RSI_OVERBOUGHT_THRESHOLD;
@@ -223,7 +228,7 @@ const ScannerPage: React.FC = () => {
     return <div className="flex justify-center items-center h-64"><Spinner /></div>;
   }
   
-  const totalColumnCount = 13;
+  const totalColumnCount = 14;
 
   return (
     <div className="space-y-6">
@@ -270,9 +275,10 @@ const ScannerPage: React.FC = () => {
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="is_on_hotlist" className="text-center">Hotlist</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="symbol">Symbole</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="price">Prix</SortableHeader>
+                        <th scope="col" className="px-2 sm:px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Tendance 4h</th>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="score">Score Global</SortableHeader>
-                        <th scope="col" className="px-2 sm:px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Conditions</th>
-                        <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="price_above_ema50_4h">Tendance 4h</SortableHeader>
+                        <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="trend_score">Score Tendance</SortableHeader>
+                        <th scope="col" className="px-2 sm:px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Conditions (6)</th>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="rsi_1h">RSI 1h</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="volume">Volume 24h</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="adx_15m">ADX 15m</SortableHeader>
@@ -303,21 +309,19 @@ const ScannerPage: React.FC = () => {
                                     </td>
                                     <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-medium text-white">{pair.symbol}</td>
                                     <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-mono transition-colors duration-200 ${priceClass}`}>${formatPrice(pair.price)}</td>
+                                    <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-semibold ${trendClass}`}>
+                                        {pair.price_above_ema50_4h === true ? '▲ HAUSSIER' : (pair.price_above_ema50_4h === false ? '▼ BAISSIER' : 'N/A')}
+                                    </td>
                                     <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm">
-                                        <div className="flex items-center space-x-2">
-                                            <span className={`px-2.5 py-1 text-xs font-semibold rounded-full min-w-[110px] text-center ${scoreDisplay.className}`}>
-                                                {scoreDisplay.text}
-                                            </span>
-                                            <span className="font-mono text-gray-400 text-xs">
-                                                ({pair.conditions_met_count ?? 0}/7)
-                                            </span>
-                                        </div>
+                                        <span className={`px-2.5 py-1 text-xs font-semibold rounded-full min-w-[140px] text-center ${scoreDisplay.className}`}>
+                                            {scoreDisplay.text} ({pair.conditions_met_count ?? 0}/7)
+                                        </span>
+                                    </td>
+                                    <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-bold ${getTrendScoreColorClass(pair.trend_score)}`}>
+                                        {pair.trend_score?.toFixed(0) || 'N/A'}
                                     </td>
                                     <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap">
                                         <ConditionDots conditions={pair.conditions} />
-                                    </td>
-                                     <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-semibold ${trendClass}`}>
-                                        {pair.price_above_ema50_4h === true ? '▲ HAUSSIER' : (pair.price_above_ema50_4h === false ? '▼ BAISSIER' : 'N/A')}
                                     </td>
                                     <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm ${getRsiColorClass(pair.rsi_1h)}`}>
                                         {pair.rsi_1h?.toFixed(1) || 'N/A'}

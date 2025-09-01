@@ -60,6 +60,15 @@ server.on('upgrade', (request, socket, head) => {
 wss.on('connection', (ws) => {
     clients.add(ws);
     log('WEBSOCKET', 'Frontend client connected.');
+
+    // Immediately send the current Fear & Greed index if it exists
+    if (botState.fearAndGreed) {
+        ws.send(JSON.stringify({
+            type: 'FEAR_AND_GREED_UPDATE',
+            payload: botState.fearAndGreed
+        }));
+    }
+
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
