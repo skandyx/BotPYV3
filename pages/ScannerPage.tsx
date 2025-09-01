@@ -7,6 +7,8 @@ import { scannerStore } from '../services/scannerStore';
 import { useAppContext } from '../contexts/AppContext';
 import TradingViewWidget from '../components/common/TradingViewWidget';
 import { SearchIcon } from '../components/icons/Icons';
+import Tooltip from '../components/common/Tooltip';
+
 
 type SortableKeys = keyof ScannedPair | 'vol_spike'; // Add custom sort key
 type SortDirection = 'asc' | 'desc';
@@ -279,7 +281,12 @@ const ScannerPage: React.FC = () => {
                         <th scope="col" className="px-2 sm:px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Tendance 4h</th>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="score">Score Global</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="trend_score">Score Tendance</SortableHeader>
-                        <th scope="col" className="px-2 sm:px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Conditions (7)</th>
+                        <th scope="col" className="px-2 sm:px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+                            <div className="flex items-center">
+                                <span>Conditions</span>
+                                <Tooltip text="Les 7 conditions de déclenchement (Squeeze, Breakout, Volume, OBV, RSI 1h, RSI 15m, Structure). La tendance 4h est dans sa propre colonne." />
+                            </div>
+                        </th>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="rsi_1h">RSI 1h</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="rsi_15m">RSI 15m</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="volume">Volume 24h</SortableHeader>
@@ -297,6 +304,12 @@ const ScannerPage: React.FC = () => {
                             const scoreDisplay = getScoreDisplay(pair);
                             const rowClass = pair.score === 'PENDING_CONFIRMATION' ? 'bg-sky-900/40' : '';
                             const trendClass = getTrendColorClass(pair.price_above_ema50_4h);
+
+                            // Corrected calculation for trigger conditions count
+                            const triggerConditionsMetCount = pair.conditions?.trend
+                                ? (pair.conditions_met_count ?? 1) - 1
+                                : (pair.conditions_met_count ?? 0);
+                            const totalTriggerConditions = 7;
 
                             return (
                                 <tr 
@@ -316,7 +329,7 @@ const ScannerPage: React.FC = () => {
                                     </td>
                                     <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm">
                                         <span className={`px-2.5 py-1 text-xs font-semibold rounded-full min-w-[140px] text-center ${scoreDisplay.className}`}>
-                                            {scoreDisplay.text} ({pair.conditions_met_count ?? 0}/8)
+                                            {scoreDisplay.text} ({triggerConditionsMetCount}/{totalTriggerConditions})
                                         </span>
                                     </td>
                                     <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-bold ${getTrendScoreColorClass(pair.trend_score)}`}>
