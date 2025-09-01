@@ -61,6 +61,7 @@ export interface Trade {
   is_scaling_in?: boolean;
   current_entry_count?: number;
   total_entries?: number;
+  scaling_in_percents?: number[]; // For flexible scaling in
 }
 
 export interface StrategyConditions {
@@ -204,9 +205,14 @@ export interface BotSettings {
     USE_OBV_VALIDATION: boolean;
 
     // --- PORTFOLIO INTELLIGENCE ---
-    SCALING_IN_ENABLED: boolean;
-    SCALING_IN_INITIAL_PCT: number;
-    SCALING_IN_ENTRIES: number;
+    SCALING_IN_CONFIG: string; // New: Flexible scaling in, e.g., "50,50" or "40,30,30"
     MAX_CORRELATED_TRADES: number;
     USE_FEAR_AND_GREED_FILTER: boolean;
+
+    // --- ADVANCED PORTFOLIO FILTERS ---
+    USE_ORDER_BOOK_LIQUIDITY_FILTER: boolean;
+    MIN_ORDER_BOOK_LIQUIDITY_USD: number;
+    USE_SECTOR_CORRELATION_FILTER: boolean;
+    USE_WHALE_MANIPULATION_FILTER: boolean;
+    WHALE_SPIKE_THRESHOLD_PCT: number; // e.g., 5 for 5% of hourly volume
 }

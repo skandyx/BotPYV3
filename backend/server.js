@@ -251,11 +251,16 @@ const loadData = async () => {
             USE_OBV_VALIDATION: isNotFalse('USE_OBV_VALIDATION'),
             
             // --- PORTFOLIO INTELLIGENCE ---
-            SCALING_IN_ENABLED: isTrue('SCALING_IN_ENABLED'),
-            SCALING_IN_INITIAL_PCT: parseInt(process.env.SCALING_IN_INITIAL_PCT, 10) || 50,
-            SCALING_IN_ENTRIES: parseInt(process.env.SCALING_IN_ENTRIES, 10) || 2,
+            SCALING_IN_CONFIG: process.env.SCALING_IN_CONFIG || "50,50",
             MAX_CORRELATED_TRADES: parseInt(process.env.MAX_CORRELATED_TRADES, 10) || 2,
             USE_FEAR_AND_GREED_FILTER: isTrue('USE_FEAR_AND_GREED_FILTER'),
+
+            // --- ADVANCED PORTFOLIO FILTERS ---
+            USE_ORDER_BOOK_LIQUIDITY_FILTER: isTrue('USE_ORDER_BOOK_LIQUIDITY_FILTER'),
+            MIN_ORDER_BOOK_LIQUIDITY_USD: parseInt(process.env.MIN_ORDER_BOOK_LIQUIDITY_USD, 10) || 200000,
+            USE_SECTOR_CORRELATION_FILTER: isTrue('USE_SECTOR_CORRELATION_FILTER'),
+            USE_WHALE_MANIPULATION_FILTER: isTrue('USE_WHALE_MANIPULATION_FILTER'),
+            WHALE_SPIKE_THRESHOLD_PCT: parseFloat(process.env.WHALE_SPIKE_THRESHOLD_PCT) || 5.0,
         };
         await saveData('settings');
     }
@@ -478,12 +483,12 @@ class RealtimeAnalyzer {
     }
     
     // Phase 2: 1m analysis to find the precision entry for pairs on the Hotlist
-    checkFor1mTrigger(symbol, tradeSettings) {
+    async checkFor1mTrigger(symbol, tradeSettings) {
         const pair = botState.scannerCache.find(p => p.symbol === symbol);
         if (!pair || !pair.is_on_hotlist || botState.pendingConfirmation.has(symbol)) return;
 
         const klines1m = this.klineData.get(symbol)?.get('1m');
-        if (!klines1m || klines1m.length < 21) return;
+        if (!klines1m || klines1m.length < 61) return; // Need 60 for hourly avg volume + 1
 
         const closes1m = klines1m.map(k => k.close);
         const volumes1m = klines1m.map(k => k.volume);
@@ -497,6 +502,17 @@ class RealtimeAnalyzer {
         
         const momentumCondition = triggerCandle.close > lastEma9;
         const volumeSpikeCondition = triggerCandle.volume > avgVolume * 1.5;
+
+        // Whale Manipulation Filter
+        if (tradeSettings.USE_WHALE_MANIPULATION_FILTER) {
+            const last60mVolumes = volumes1m.slice(-61, -1);
+            const hourlyAvgVolume = last60mVolumes.reduce((sum, v) => sum + v, 0) / 60;
+            const thresholdVolume = hourlyAvgVolume * (tradeSettings.WHALE_SPIKE_THRESHOLD_PCT / 100);
+            if (triggerCandle.volume > thresholdVolume) {
+                this.log('TRADE', `[WHALE FILTER] Rejected ${symbol}. 1m volume (${triggerCandle.volume.toFixed(0)}) exceeded threshold (${thresholdVolume.toFixed(0)}).`);
+                return; // Abort
+            }
+        }
 
         let obvCondition = true; // Default to true if not used
         if (tradeSettings.USE_OBV_VALIDATION) {
@@ -525,7 +541,7 @@ class RealtimeAnalyzer {
                 });
                 this.log('TRADE', `[MTF] ${symbol} is now pending 5m confirmation. Trigger price: $${triggerCandle.close}`);
             } else {
-                const tradeOpened = tradingEngine.evaluateAndOpenTrade(pair, triggerCandle.low, tradeSettings);
+                const tradeOpened = await tradingEngine.evaluateAndOpenTrade(pair, triggerCandle.low, tradeSettings);
                 if (tradeOpened) {
                     pair.is_on_hotlist = false;
                     removeSymbolFromMicroStreams(symbol);
@@ -535,7 +551,7 @@ class RealtimeAnalyzer {
         }
     }
 
-    validate5mConfirmation(symbol, new5mCandle) {
+    async validate5mConfirmation(symbol, new5mCandle) {
         const pendingSignal = botState.pendingConfirmation.get(symbol);
         if (!pendingSignal) return;
         
@@ -547,7 +563,7 @@ class RealtimeAnalyzer {
         
         if (isValid) {
             this.log('TRADE', `[MTF] SUCCESS: 5m candle for ${symbol} confirmed breakout. Proceeding to trade.`);
-            const tradeOpened = tradingEngine.evaluateAndOpenTrade(pair, slPriceReference, settings);
+            const tradeOpened = await tradingEngine.evaluateAndOpenTrade(pair, slPriceReference, settings);
             if (tradeOpened) {
                 pair.is_on_hotlist = false;
                 removeSymbolFromMicroStreams(symbol);
@@ -563,7 +579,7 @@ class RealtimeAnalyzer {
 
 
     async hydrateSymbol(symbol, interval = '15m') {
-        const klineLimit = interval === '1m' ? 50 : (interval === '5m' ? 50 : 201);
+        const klineLimit = interval === '1m' ? 100 : (interval === '5m' ? 50 : 201);
         if (this.hydrating.has(`${symbol}-${interval}`)) return;
         this.hydrating.add(`${symbol}-${interval}`);
         this.log('INFO', `[Analyzer] Hydrating ${interval} klines for: ${symbol}`);
@@ -627,7 +643,7 @@ class RealtimeAnalyzer {
             this.checkFor1mTrigger(symbol, tradeSettings);
 
             // Check 2: Look for scaling-in confirmations on existing trades
-            if (tradeSettings.SCALING_IN_ENABLED) {
+            if (tradeSettings.SCALING_IN_CONFIG && tradeSettings.SCALING_IN_CONFIG.trim() !== '') {
                 const position = botState.activePositions.find(p => p.symbol === symbol && p.is_scaling_in);
                 if (position && kline.close > kline.open) { // Bullish confirmation candle
                     tradingEngine.scaleInPosition(position, kline.close, tradeSettings);
@@ -789,6 +805,33 @@ function removeSymbolFromMicroStreams(symbol) {
     }
 }
 
+// --- Crypto Sector Mapping ---
+const CRYPTO_SECTORS = {
+    // Layer 1
+    'BTC': 'L1', 'ETH': 'L1', 'BNB': 'L1', 'SOL': 'L1', 'ADA': 'L1', 'AVAX': 'L1',
+    'DOT': 'L1', 'TRX': 'L1', 'NEAR': 'L1', 'APT': 'L1', 'ALGO': 'L1', 'FTM': 'L1',
+    'SUI': 'L1', 'SEI': 'L1', 'ATOM': 'L1', 'ICP': 'L1',
+    // Layer 2
+    'MATIC': 'L2', 'OP': 'L2', 'ARB': 'L2', 'IMX': 'L2', 'MANTA': 'L2', 'STRK': 'L2',
+    // DeFi
+    'UNI': 'DeFi', 'LINK': 'DeFi', 'AAVE': 'DeFi', 'LDO': 'DeFi', 'MKR': 'DeFi',
+    'CRV': 'DeFi', 'SUSHI': 'DeFi', 'SNX': 'DeFi', 'COMP': 'DeFi', 'RUNE': 'DeFi',
+    // Memecoin
+    'DOGE': 'Meme', 'SHIB': 'Meme', 'PEPE': 'Meme', 'WIF': 'Meme', 'FLOKI': 'Meme', 'BONK': 'Meme',
+    // AI
+    'FET': 'AI', 'RNDR': 'AI', 'AGIX': 'AI', 'GRT': 'AI', 'WLD': 'AI',
+    // Gaming / Metaverse
+    'AXS': 'Gaming', 'SAND': 'Gaming', 'MANA': 'Gaming', 'GALA': 'Gaming',
+    // RWA (Real World Assets)
+    'ONDO': 'RWA', 'PENDLE': 'RWA',
+    // Catch-all
+    'XRP': 'Other', 'LTC': 'Other', 'XLM': 'Other', 'ETC': 'Other',
+};
+const getSymbolSector = (symbol) => {
+    const baseAsset = symbol.replace('USDT', '');
+    return CRYPTO_SECTORS[baseAsset] || 'Other';
+};
+
 
 // --- Bot State & Core Logic ---
 let botState = {
@@ -895,11 +938,45 @@ const settingProfiles = {
 
 // --- Trading Engine ---
 const tradingEngine = {
-    evaluateAndOpenTrade(pair, slPriceReference, tradeSettings) {
+    async evaluateAndOpenTrade(pair, slPriceReference, tradeSettings) {
         if (!botState.isRunning) return false;
         if (botState.circuitBreakerStatus.startsWith('HALTED') || botState.circuitBreakerStatus.startsWith('PAUSED')) {
             log('WARN', `Trade for ${pair.symbol} blocked: Global Circuit Breaker is active (${botState.circuitBreakerStatus}).`);
             return false;
+        }
+        
+        // --- Liquidity Filter ---
+        if (tradeSettings.USE_ORDER_BOOK_LIQUIDITY_FILTER) {
+            try {
+                const depth = await fetch(`https://api.binance.com/api/v3/depth?symbol=${pair.symbol}&limit=100`).then(res => res.json());
+                const price = pair.price;
+                const range = 0.005; // +/- 0.5%
+                const bidsInScope = depth.bids.filter(b => parseFloat(b[0]) >= price * (1 - range));
+                const asksInScope = depth.asks.filter(a => parseFloat(a[0]) <= price * (1 + range));
+                const totalBidsValue = bidsInScope.reduce((sum, b) => sum + (parseFloat(b[0]) * parseFloat(b[1])), 0);
+                const totalAsksValue = asksInScope.reduce((sum, a) => sum + (parseFloat(a[0]) * parseFloat(a[1])), 0);
+                const totalLiquidity = totalBidsValue + totalAsksValue;
+
+                if (totalLiquidity < tradeSettings.MIN_ORDER_BOOK_LIQUIDITY_USD) {
+                    log('TRADE', `[LIQUIDITY FILTER] Rejected ${pair.symbol}. Liquidity ($${totalLiquidity.toFixed(0)}) is below threshold ($${tradeSettings.MIN_ORDER_BOOK_LIQUIDITY_USD}).`);
+                    return false;
+                }
+            } catch (e) {
+                log('ERROR', `[LIQUIDITY FILTER] Failed to fetch order book for ${pair.symbol}: ${e.message}. Skipping trade.`);
+                return false;
+            }
+        }
+        
+        // --- Sector Correlation Filter ---
+        if (tradeSettings.USE_SECTOR_CORRELATION_FILTER) {
+            const newTradeSector = getSymbolSector(pair.symbol);
+            if (newTradeSector !== 'Other') {
+                const hasOpenTradeInSector = botState.activePositions.some(p => getSymbolSector(p.symbol) === newTradeSector);
+                if (hasOpenTradeInSector) {
+                    log('TRADE', `[SECTOR FILTER] Rejected ${pair.symbol}. A trade in the '${newTradeSector}' sector is already open.`);
+                    return false;
+                }
+            }
         }
 
         // --- Correlation Filter ---
@@ -968,7 +1045,11 @@ const tradingEngine = {
         }
 
         const target_quantity = positionSizeUSD / entryPrice;
-        const initial_quantity = tradeSettings.SCALING_IN_ENABLED ? (target_quantity * (tradeSettings.SCALING_IN_INITIAL_PCT / 100)) : target_quantity;
+
+        const scalingInPercents = (tradeSettings.SCALING_IN_CONFIG || "").split(',').map(p => parseFloat(p.trim())).filter(p => !isNaN(p) && p > 0);
+        const useScalingIn = scalingInPercents.length > 0;
+        
+        const initial_quantity = useScalingIn ? (target_quantity * (scalingInPercents[0] / 100)) : target_quantity;
         const initial_cost = initial_quantity * entryPrice;
 
         let stopLoss;
@@ -1007,9 +1088,10 @@ const tradingEngine = {
             partial_tp_hit: false,
             realized_pnl: 0,
             trailing_stop_tightened: false,
-            is_scaling_in: tradeSettings.SCALING_IN_ENABLED && tradeSettings.SCALING_IN_ENTRIES > 1,
+            is_scaling_in: useScalingIn && scalingInPercents.length > 1,
             current_entry_count: 1,
-            total_entries: tradeSettings.SCALING_IN_ENTRIES,
+            total_entries: scalingInPercents.length,
+            scaling_in_percents: scalingInPercents,
         };
 
         log('TRADE', `>>> FIRING TRADE (ENTRY 1/${newTrade.total_entries}) <<< Opening ${botState.tradingMode} trade for ${pair.symbol}: Qty=${initial_quantity.toFixed(4)}, Entry=$${entryPrice}`);
@@ -1024,11 +1106,10 @@ const tradingEngine = {
     },
 
     scaleInPosition(position, newPrice, tradeSettings) {
-        const remainingEntries = position.total_entries - position.current_entry_count;
-        if (remainingEntries <= 0) return;
-
-        const remainingQty = position.target_quantity - position.quantity;
-        const chunkQty = remainingQty / remainingEntries;
+        if (!position.scaling_in_percents || position.current_entry_count >= position.total_entries) return;
+        
+        const nextEntryPercent = position.scaling_in_percents[position.current_entry_count];
+        const chunkQty = position.target_quantity * (nextEntryPercent / 100);
         const chunkCost = chunkQty * newPrice;
 
         if (botState.balance < chunkCost) {

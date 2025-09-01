@@ -132,11 +132,14 @@ const tooltips: Record<string, string> = {
     CONSECUTIVE_LOSS_LIMIT: "Le nombre maximum de pertes consécutives autorisées. Si cette limite est atteinte, le bot se met en pause pour éviter de trader dans de mauvaises conditions de marché.",
     USE_MTF_VALIDATION: "Validation Multi-Temporelle : Après un signal 1m, attendre la clôture d'une bougie 5m haussière pour confirmer le breakout avant d'entrer. Réduit considérablement les fausses cassures.",
     USE_OBV_VALIDATION: "Confirmation par Volume (OBV) : Exiger que l'indicateur On-Balance Volume (1m) soit en hausse lors du signal de breakout. Confirme que le volume acheteur réel soutient le mouvement.",
-    SCALING_IN_ENABLED: "Activer les entrées fractionnées (Scaling-In) pour réduire le risque sur les faux signaux en n'engageant pas 100% de la position immédiatement.",
-    SCALING_IN_INITIAL_PCT: "Le pourcentage de la taille totale de la position à engager lors de la première entrée (ex: 50 pour 50%).",
-    SCALING_IN_ENTRIES: "Le nombre total d'entrées pour construire la position complète (ex: 2 signifie une entrée initiale et un renforcement).",
+    SCALING_IN_CONFIG: "Définit la stratégie d'entrées fractionnées. Ex: '50,50' pour 2 entrées de 50% chacune, ou '40,30,30' pour 3 entrées. Laissez vide pour désactiver.",
     MAX_CORRELATED_TRADES: "Le nombre maximum de trades sur des altcoins (corrélés à BTC) autorisés à être ouverts simultanément pour éviter une surexposition.",
-    USE_FEAR_AND_GREED_FILTER: "Activer le mode 'Risk-Off' automatique. Le bot se mettra en pause si le sentiment du marché devient extrême (peur ou euphorie), selon l'indice Fear & Greed."
+    USE_FEAR_AND_GREED_FILTER: "Activer le mode 'Risk-Off' automatique. Le bot se mettra en pause si le sentiment du marché devient extrême (peur ou euphorie), selon l'indice Fear & Greed.",
+    USE_ORDER_BOOK_LIQUIDITY_FILTER: "Vérifier la profondeur du carnet d'ordres pour une liquidité suffisante avant d'entrer dans un trade afin d'éviter le slippage.",
+    MIN_ORDER_BOOK_LIQUIDITY_USD: "La quantité minimale de liquidité (en USD) qui doit être disponible dans ±0.5% du prix actuel pour que le trade soit autorisé.",
+    USE_SECTOR_CORRELATION_FILTER: "Empêcher d'ouvrir des trades sur plusieurs actifs du même secteur (ex: L1, L2, DeFi) simultanément pour améliorer la diversification.",
+    USE_WHALE_MANIPULATION_FILTER: "Détecter et ignorer les signaux d'entrée causés par des pics de volume anormaux sur une seule bougie, qui sont souvent des pièges.",
+    WHALE_SPIKE_THRESHOLD_PCT: "Le pourcentage du volume horaire moyen. Si une bougie de 1 minute dépasse ce seuil (ex: 5%), le signal est considéré comme une manipulation."
 };
 
 const inputClass = "mt-1 block w-full rounded-md border-[#3e4451] bg-[#0c0e12] shadow-sm focus:border-[#f0b90b] focus:ring-[#f0b90b] sm:text-sm text-white";
@@ -460,11 +463,7 @@ const SettingsPage: React.FC = () => {
                     <div className="bg-[#14181f]/50 border border-[#2b2f38] rounded-lg p-6 shadow-lg">
                         <h3 className="text-lg font-semibold text-white mb-4">Intelligence de Portefeuille</h3>
                         <div className="space-y-4">
-                           <ToggleField id="SCALING_IN_ENABLED" label="Activer les Entrées Fractionnées" />
-                           <div className={`grid grid-cols-2 gap-4 transition-opacity ${settings.SCALING_IN_ENABLED ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
-                               <InputField id="SCALING_IN_INITIAL_PCT" label="Entrée Initiale (%)" />
-                               <InputField id="SCALING_IN_ENTRIES" label="Nombre d'Entrées" />
-                           </div>
+                           <InputField id="SCALING_IN_CONFIG" label="Configuration des Entrées Fractionnées" type="text"/>
                            <hr className="border-gray-700"/>
                            <InputField id="MAX_CORRELATED_TRADES" label="Max Trades Corrélés Simultanés"/>
                         </div>
@@ -501,6 +500,24 @@ const SettingsPage: React.FC = () => {
                         <div className="space-y-4">
                            <ToggleField id="USE_OBV_VALIDATION" label="Confirmation par Volume (OBV)" />
                            <ToggleField id="USE_MTF_VALIDATION" label="Validation Multi-Temporelle (5m)" />
+                        </div>
+                    </div>
+
+                    {/* Advanced Portfolio Filters */}
+                    <div className="bg-[#14181f]/50 border border-[#2b2f38] rounded-lg p-6 shadow-lg">
+                        <h3 className="text-lg font-semibold text-white mb-4">Filtres de Portefeuille Avancés</h3>
+                        <div className="space-y-4">
+                            <ToggleField id="USE_ORDER_BOOK_LIQUIDITY_FILTER" label="Filtre de Liquidité (Carnet d'Ordres)" />
+                            <div className={`transition-opacity ${settings.USE_ORDER_BOOK_LIQUIDITY_FILTER ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                                <InputField id="MIN_ORDER_BOOK_LIQUIDITY_USD" label="Liquidité Minimale Requise ($)" />
+                            </div>
+                            <hr className="border-gray-700"/>
+                            <ToggleField id="USE_WHALE_MANIPULATION_FILTER" label="Filtre Anti-Manipulation (Baleine)" />
+                             <div className={`transition-opacity ${settings.USE_WHALE_MANIPULATION_FILTER ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                                <InputField id="WHALE_SPIKE_THRESHOLD_PCT" label="Seuil Pic de Volume (%)" />
+                            </div>
+                            <hr className="border-gray-700"/>
+                            <ToggleField id="USE_SECTOR_CORRELATION_FILTER" label="Filtre de Corrélation par Secteur" />
                         </div>
                     </div>
 

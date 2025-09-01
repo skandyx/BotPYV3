@@ -50,111 +50,87 @@ The application is designed with a dark, modern aesthetic (`bg-[#0c0e12]`), usin
 
 ---
 
-## 🧠 Trading Strategy Explained: The "Macro-Micro" Precision Hunter
-
-The bot's core philosophy is to combine a high-level **"Macro"** analysis to find high-probability environments with a low-level **"Micro"** analysis to pinpoint the perfect entry moment. This avoids the "noise" of low timeframes while capturing the explosive start of a move with surgical precision.
-
-### **Phase 1: Macro Scan & Hotlist Qualification (4h / 15m)**
-
-The bot continuously scans all USDT pairs, looking for those that are "primed" for a potential explosive move. Instead of trading immediately, it adds qualified pairs to a **"Hotlist"** (marked with a 🎯 in the scanner). A pair must pass two strict macro filters:
-
-1.  **MASTER TREND FILTER (The Context - 4h Chart):** The pair must be in a confirmed, powerful long-term uptrend.
-    *   **Condition:** The current price is **above its 50-period Exponential Moving Average (EMA50)**.
-
-2.  **VOLATILITY COMPRESSION (The Preparation - 15m Chart):** The market must be consolidating and building up energy, like a coiled spring.
-    *   **Condition:** The pair is in a **Bollinger Band Squeeze**. This is detected when the width of the bands on the *previous* 15m candle was in the lowest 25% of its values over the last **50 periods**.
-
-If both conditions are met, the pair is placed on the **Hotlist**. The bot now "zooms in" and proceeds to Phase 2, analyzing every 1-minute candle for this specific pair.
-
-### **Phase 2: Micro Trigger & Safety Checks (1m)**
-
-For pairs on the Hotlist, the bot waits for the exact moment the breakout begins. The trade signal is generated if all the following micro-conditions and safety checks are met:
-
-1.  **MOMENTUM SHIFT (The Spark - 1m Chart):** The immediate, short-term momentum must flip bullish.
-    *   **Condition:** A 1-minute candle **closes above the 9-period Exponential Moving Average (EMA9)**.
-
-2.  **VOLUME CONFIRMATION (The Fuel - 1m Chart):** The breakout must be backed by a surge in buying interest.
-    *   **Condition:** The volume of the trigger candle is significantly higher than average (e.g., **> 1.5 times the average of the last 20 minutes**).
-
-3.  **SAFETY FILTER CHECKS (RSI & Parabolic):** The bot verifies that the market is not over-extended (`RSI < Threshold`) and that the move is not a sudden, unsustainable vertical spike (`Parabolic Filter`).
-
-### **Phase 2.5: Tactical Analysis & Profile Selection (The Adaptive Brain)**
-
-If a valid entry signal is generated in Phase 2, and the "Dynamic Profile Selector" is enabled, the bot performs one final, ultra-fast analysis to choose the best trade management strategy for the *current market personality*. It uses two key indicators:
-
-1.  **ADX (Average Directional Index) on 15m:** Measures the strength of the trend.
-2.  **ATR (Average True Range) as a % of Price on 15m:** Measures volatility.
-
-Based on this, it selects one of three profiles:
--   **If the market is in a "Range" (ADX is very low):** It selects **"Le Scalpeur"**. The bot knows a big trend is unlikely, so it aims for a very small, quick profit and gets out.
--   **If the market is "Hyper-Volatile" (ATR % is very high):** It selects **"Le Chasseur de Volatilité"**. The bot uses a wider initial stop loss to survive the noise and an aggressive trailing stop to lock in gains quickly.
--   **If the market is in a "Healthy Trend" (Default case):** It selects **"Le Sniper"**. This is the ideal condition to apply the full "Profit Runner" strategy to maximize gains from a strong, stable trend.
-
-### **Phase 3: Dynamic Trade Management (Executing the Chosen Tactic)**
-
-Once a trade is open and a profile is selected, the exit management is executed according to that profile's philosophy.
-
-1.  **STOP LOSS (Initial Protection):**
-    *   **Placement:** The initial Stop Loss is placed logically, often below the 1-minute trigger candle or adapted using ATR for volatile conditions.
-
-2.  **ADVANCED RISK MANAGEMENT (The "Profit Runner" Strategy):**
-    This sequence is typically used by the **"Sniper"** profile:
-    *   **Step 1: Partial Take Profit:** Sell a portion of the position at a small initial profit target.
-    *   **Step 2: Move to Break-even:** Move the Stop Loss to the entry price, making the trade risk-free.
-    *   **Step 3: Trailing Stop Loss:** Use a trailing stop on the remaining position to "ride the wave" and capture the majority of a strong trend.
-
----
 # Version Française
 
 ## 🧠 Stratégie de Trading : “Le Chasseur de Précision Macro-Micro”
 
-La philosophie du bot est de combiner une analyse **"Macro"** à haute échelle de temps pour trouver des environnements à forte probabilité, avec une analyse **"Micro"** à basse échelle de temps pour identifier le point d'entrée parfait. Cela permet d'éviter le "bruit" des petites unités de temps tout en capturant le début explosif d'un mouvement avec une précision chirurgicale.
+La philosophie du bot est de combiner une analyse **"Macro"** à haute échelle de temps pour trouver des environnements à forte probabilité, avec une analyse **"Micro"** à basse échelle de temps pour identifier le point d'entrée parfait. Cela permet d'éviter le "bruit" des petites unités de temps tout en capturant le début explosif d'un mouvement avec une précision chirurgicale, le tout protégé par des couches de sécurité robustes au niveau du capital.
+
+---
 
 ### **Phase 1 : Le Radar Macro (Qualification pour la Hotlist)**
 
-Le bot scanne en permanence toutes les paires USDT, à la recherche de celles qui sont "prêtes" pour un potentiel mouvement explosif. Il ajoute les paires qualifiées à une **"Hotlist"** (marquée par un `🎯` dans le scanner). Une paire doit passer deux filtres macro stricts :
+L'objectif est d'identifier des paires dans un environnement propice à une explosion haussière. Une paire qui remplit ces conditions est ajoutée à une **"Hotlist"** (marquée par un `🎯` dans l'UI).
 
-1.  **FILTRE DE TENDANCE MAÎTRE (Le Contexte - Graphique 4h) :** La paire doit être dans une tendance haussière de fond confirmée.
-    *   **Règle :** Le prix actuel est **au-dessus de sa Moyenne Mobile Exponentielle 50 (MME50)**.
+*   **Contexte d'Analyse** : Graphique 15 minutes (15m) et 4 heures (4h).
+*   **Condition 1 : Filtre de Tendance Maître (Contexte 4h)**
+    *   **Outil** : Moyenne Mobile Exponentielle 50 périodes (MME50).
+    *   **Règle** : Le prix de clôture actuel sur le graphique 4h doit être **STRICTEMENT SUPÉRIEUR** à la MME50. ( `Prix > MME50_4h` ).
+*   **Condition 2 : Compression de Volatilité (Préparation 15m)**
+    *   **Outil** : Bandes de Bollinger (BB).
+    *   **Règle** : La paire doit être dans un **"Bollinger Band Squeeze"**. Ceci est défini lorsque la largeur des bandes sur la bougie de 15m *précédente* est dans le quartile inférieur (25%) de ses valeurs sur les 50 dernières périodes.
+*   **Action** : Si la `Condition 1` ET la `Condition 2` sont vraies, ajouter le symbole à la **Hotlist**. S'abonner dynamiquement à ses flux de données 1 minute et 5 minutes.
 
-2.  **COMPRESSION DE VOLATILITÉ (La Préparation - Graphique 15m) :** Le marché doit se consolider et accumuler de l'énergie.
-    *   **Règle :** La paire est dans un **"Squeeze" des Bandes de Bollinger**. Détecté lorsque la largeur des bandes sur la bougie de 15m *précédente* était dans le quartile inférieur (25%) de ses valeurs sur les **50 dernières périodes**.
+---
 
-Si ces conditions sont remplies, la paire est sur la **Hotlist**. Le bot "zoome" alors et passe à la Phase 2.
+### **Phase 2 : Le Déclencheur Micro & Confirmation Multi-couches (Anti-Fakeout)**
 
-### **Phase 2 : Déclencheur Micro & Vérifications de Sécurité (1m)**
+Pour les paires sur la Hotlist, le bot analyse chaque bougie d'une minute pour trouver le point d'entrée. Pour être validé, un signal doit passer une série de filtres de confirmation stricts.
 
-Pour les paires sur la Hotlist, le bot attend le signal de cassure. Le signal est généré si toutes les conditions suivantes sont remplies :
+*   **Contexte d'Analyse** : Graphique 1 minute (1m) et 5 minutes (5m).
+*   **Condition 1 : Basculement du Momentum (L'Étincelle - 1m)**
+    *   **Outil** : Moyenne Mobile Exponentielle 9 périodes (MME9).
+    *   **Règle** : Une bougie de 1 minute doit **clôturer AU-DESSUS** de la MME9.
+*   **Condition 2 : Confirmation par le Volume (Le Carburant - 1m)**
+    *   **Outils** : Volume de trading & On-Balance Volume (OBV).
+    *   **Règle 2a** : Le volume de la bougie de déclenchement doit être **supérieur à 1.5 fois** la moyenne du volume récent.
+    *   **Règle 2b** : L'indicateur **OBV** sur 1 minute doit avoir une pente ascendante, confirmant que la pression acheteuse est réelle et soutenue.
+*   **Condition 3 : Validation Multi-Temporelle (La Confirmation - 5m)**
+    *   **Règle** : Après le signal 1m, le bot met le trade en **attente**. Il attend la clôture de la bougie de 5 minutes en cours. Le trade n'est exécuté que si cette bougie de 5 minutes clôture également de manière haussière et au-dessus du prix de déclenchement initial. **Ceci est le filtre anti "fake breakout" le plus puissant.**
+*   **Condition 4 : Filtres de Sécurité (Anti-Surchauffe - 1h)**
+    *   **Règle** : Le bot vérifie que le RSI sur 1 heure n'est pas en zone de surachat et que le prix n'a pas connu une hausse verticale insoutenable juste avant le signal (`Filtre Parabolique`).
+*   **Action** : Si toutes les conditions (1, 2a, 2b, 3, 4) sont remplies, un **signal d'entrée de haute qualité** est généré. Le bot passe à la Phase 2.5.
 
-1.  **CHANGEMENT DE MOMENTUM (L'Étincelle - Graphique 1m) :** Le momentum à très court terme doit basculer à la hausse.
-    *   **Règle :** Une bougie de 1 minute **clôture au-dessus de la Moyenne Mobile Exponentielle 9 (MME9)**.
-
-2.  **CONFIRMATION PAR LE VOLUME (Le Carburant - Graphique 1m) :** La cassure doit être soutenue par un intérêt acheteur.
-    *   **Règle :** Le volume de la bougie de déclenchement est **supérieur à 1.5 fois la moyenne** du volume récent.
-
-3.  **FILTRES DE SÉCURITÉ (RSI & Parabolique) :** Le bot vérifie que le marché n'est pas déjà en surchauffe (`RSI < Seuil`) et que le mouvement n'est pas un pic vertical insoutenable (`Filtre Parabolique`).
+---
 
 ### **Phase 2.5 : Analyse Tactique & Sélection du Profil (Le Cerveau Adaptatif)**
 
-Si un signal d'entrée valide est généré, et que le "Sélecteur de Profil Dynamique" est activé, le bot effectue une dernière analyse ultra-rapide pour choisir la meilleure stratégie de gestion pour la *personnalité actuelle du marché*. Il utilise deux indicateurs clés :
+Juste avant d'ouvrir la position, si le mode dynamique est activé, le bot effectue une analyse de la "personnalité" du marché pour choisir la **stratégie de gestion de sortie** la plus appropriée.
 
-1.  **ADX (Average Directional Index) sur 15m :** Mesure la force de la tendance.
-2.  **ATR (Average True Range) en % du prix sur 15m :** Mesure la volatilité.
+*   **Contexte d'Analyse** : Indicateurs 15 minutes (ADX, ATR %).
+*   **Matrice de Décision** :
+    1.  **Le marché est-il en "Range" ?** (`ADX < Seuil_Range`) -> Sélectionner le profil **"Le Scalpeur"**.
+    2.  **Sinon, le marché est-il "Hyper-Volatil" ?** (`ATR % > Seuil_Volatil`) -> Sélectionner le profil **"Le Chasseur de Volatilité"**.
+    3.  **Sinon (cas par défaut)** -> Sélectionner le profil **"Le Sniper"**.
+*   **Action Finale** : Exécuter l'ordre d'achat avec les paramètres du profil sélectionné.
 
-En fonction de cela, il sélectionne l'un des trois profils :
--   **Si le marché est en "Range" (ADX très bas) :** Il sélectionne **"Le Scalpeur"**. Le bot sait qu'une grande tendance est improbable, il vise donc un profit très petit et rapide et sort.
--   **Si le marché est "Hyper-Volatil" (ATR % très élevé) :** Il sélectionne **"Le Chasseur de Volatilité"**. Le bot utilise un stop loss initial plus large pour survivre au bruit et un stop suiveur agressif pour sécuriser les gains rapidement.
--   **Si le marché est en "Tendance Saine" (Cas par défaut) :** Il sélectionne **"Le Sniper"**. C'est la condition idéale pour appliquer la stratégie complète du "Profit Runner" afin de maximiser les gains d'une tendance forte et stable.
+---
 
-### **Phase 3 : Gestion Dynamique du Trade (Exécution de la Tactique Choisie)**
+### **Phase 3 : Gestion de Trade & Entrée Intelligente**
 
-Une fois le trade ouvert et le profil sélectionné, la gestion de la sortie est exécutée selon la philosophie de ce profil.
+*   **Entrées Fractionnées (Scaling In)** : Pour minimiser le risque sur les faux signaux, le bot n'entre pas avec 100% de sa position. Il initie le trade avec une fraction (ex: 40%) et n'ajoute les autres parties (ex: 30%, puis 30%) que si les bougies suivantes confirment la continuation du mouvement.
 
-1.  **STOP LOSS (Protection Initiale)** :
-    *   **Placement** : Le Stop Loss initial est placé logiquement, souvent sous la bougie de déclenchement de 1 minute ou adapté via l'ATR pour les conditions volatiles.
+*   **Gestion de Sortie Progressive (Basée sur le Risque "R")** : La gestion de la sortie est dynamique, surtout pour le profil "Sniper".
+    1.  **Stop Loss Initial (Basé sur l'ATR)** : Le Stop Loss est placé intelligemment en fonction de la volatilité du marché (ATR).
+    2.  **Mise à Zéro du Risque (à +1R)** : Dès que le profit atteint 1 fois le risque initial (Gain = +1R), le Stop Loss est déplacé au point d'entrée, rendant le trade **sans risque**.
+    3.  **Trailing Stop Adaptatif (au-delà de +1R)** : Un Trailing Stop basé sur l'ATR prend le relais. Il se **resserre** automatiquement lorsque le trade atteint des multiples de R supérieurs (ex: +2R), protégeant les gains de manière plus agressive tout en laissant la place au trade de respirer.
 
-2.  **GESTION AVANCÉE DU RISQUE (La Stratégie "Profit Runner")** :
-    Cette séquence est typiquement utilisée par le profil **"Sniper"** :
-    *   **Étape 1 : Prise de Profit Partielle** : Vendre une partie de la position à un petit objectif de profit initial.
-    *   **Étape 2 : Mise à Seuil de Rentabilité (Break-even)** : Déplacer le Stop Loss au prix d'entrée, rendant le trade sans risque.
-    *   **Étape 3 : Stop Loss Suiveur (Trailing Stop Loss)** : Utiliser un stop suiveur sur le reste de la position pour "surfer la vague" et capturer la majorité d'une forte tendance.
+---
+
+### **Phase 4 : Sécurité du Portefeuille & Survie à Long Terme (Le Capital est Sacré)**
+
+Ces règles de sécurité ont la priorité sur toutes les stratégies d'entrée.
+
+*   **1. Filtre de Liquidité (Carnet d'Ordres)** : Avant tout trade, le bot vérifie qu'il y a suffisamment de liquidité dans le carnet d'ordres pour éviter le slippage.
+
+*   **2. Détection de Manipulation ("Filtre Anti-Baleine")** : Si une bougie de 1 minute montre un volume anormalement explosif (ex: >5% du volume horaire moyen), le signal est ignoré pour éviter les pièges.
+
+*   **3. Gestion de Corrélation par Secteur** : Pour éviter la surexposition, le bot n'ouvrira qu'un seul trade à la fois par "secteur" crypto (ex: un seul L1, un seul L2, etc.).
+
+*   **4. Mode "Risk-Off" Automatique** : Le bot surveille le sentiment de marché via l'indice **"Fear & Greed"**. Si le marché devient extrêmement euphorique ou paniqué, le trading est automatiquement mis en pause.
+
+*   **5. Filtre de Dominance BTC/ETH** : Le bot surveille en permanence le prix du Bitcoin. Si BTC subit un "dump" violent et soudain (ex: >1.5% en 5 minutes), un **disjoncteur global** s'active, bloquant toute nouvelle entrée.
+
+*   **6. Coupe-Circuits de Capital** :
+    *   **Limite de Perte Journalière (Drawdown)** : Si le P&L total de la journée atteint un seuil négatif (ex: -3% du capital), le bot s'arrête complètement jusqu'au lendemain.
+    *   **Limite de Pertes Consécutives** : Si le bot enchaîne un nombre défini de trades perdants (ex: 5), il se met en pause temporairement.

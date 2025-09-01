@@ -94,16 +94,24 @@ TRAILING_STOP_TIGHTEN_THRESHOLD_R=1.0
 TRAILING_STOP_TIGHTEN_MULTIPLIER_REDUCTION=0.3
 
 # --- PORTFOLIO INTELLIGENCE ---
-# Activer les entrées fractionnées. (true/false)
-SCALING_IN_ENABLED=true
-# Pourcentage de la taille de position à engager sur la première entrée.
-SCALING_IN_INITIAL_PCT=50
-# Nombre total d'entrées pour construire la position.
-SCALING_IN_ENTRIES=2
+# Configuration des entrées fractionnées (ex: "50,50" ou "40,30,30"). Laisser vide pour désactiver.
+SCALING_IN_CONFIG="50,50"
 # Nombre maximum de trades sur altcoins ouverts en même temps.
 MAX_CORRELATED_TRADES=2
 # Activer la pause automatique en cas de sentiment de marché extrême. (true/false)
 USE_FEAR_AND_GREED_FILTER=true
+
+# --- ADVANCED PORTFOLIO FILTERS ---
+# Activer le filtre de liquidité du carnet d'ordres. (true/false)
+USE_ORDER_BOOK_LIQUIDITY_FILTER=true
+# Liquidité minimale en USD requise dans le carnet (dans +/- 0.5% du prix).
+MIN_ORDER_BOOK_LIQUIDITY_USD=200000
+# Activer le filtre de corrélation par secteur. (true/false)
+USE_SECTOR_CORRELATION_FILTER=true
+# Activer le filtre de détection de manipulation ("anti-baleine"). (true/false)
+USE_WHALE_MANIPULATION_FILTER=true
+# Seuil de volume (en % du volume horaire moyen) pour détecter une manipulation.
+WHALE_SPIKE_THRESHOLD_PCT=5.0
 
 # --- GLOBAL SAFETY ---
 # Pourcentage de chute de BTC sur 5 minutes pour déclencher une alerte.
