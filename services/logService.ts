@@ -6,7 +6,7 @@ class LogService {
     private allLogs: LogEntry[] = [];
     private logsByLevel: Map<LogEntry['level'], LogEntry[]> = new Map();
     private subscribers: LogSubscriber[] = [];
-    private readonly MAX_LOGS = 500;
+    private readonly MAX_LOGS = 1000;
 
     constructor() {
         LOG_LEVELS.forEach(level => {

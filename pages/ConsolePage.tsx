@@ -19,7 +19,7 @@ const ConsolePage: React.FC = () => {
   useEffect(() => {
     const handleNewLog = (newLog: LogEntry) => {
       if (activeTab === 'ALL' || activeTab === newLog.level) {
-        setLogs(prevLogs => [...prevLogs.slice(-499), newLog]);
+        setLogs(prevLogs => [...prevLogs.slice(-999), newLog]);
       }
     };
 

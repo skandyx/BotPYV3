@@ -490,7 +490,7 @@ class RealtimeAnalyzer {
     }
     
     // Phase 2: 1m analysis to find the precision entry for pairs on the Hotlist
-    async checkFor1mTrigger(symbol, tradeSettings) {
+    async checkFor1mTrigger(symbol, tradeSettings, profileName) {
         const pair = botState.scannerCache.find(p => p.symbol === symbol);
         if (!pair || !pair.is_on_hotlist || botState.pendingConfirmation.has(symbol)) return;
 
@@ -564,10 +564,11 @@ class RealtimeAnalyzer {
                     triggerTimestamp: Date.now(),
                     slPriceReference: triggerCandle.low,
                     settings: tradeSettings,
+                    profileName: profileName,
                 });
                 this.log('TRADE', `[MTF] ${symbol} is now pending 5m confirmation. Trigger price: $${triggerCandle.close}`);
             } else {
-                const tradeOpened = await tradingEngine.evaluateAndOpenTrade(pair, triggerCandle.low, tradeSettings);
+                const tradeOpened = await tradingEngine.evaluateAndOpenTrade(pair, triggerCandle.low, tradeSettings, profileName);
                 if (tradeOpened) {
                     pair.is_on_hotlist = false;
                     removeSymbolFromMicroStreams(symbol);
@@ -584,7 +585,7 @@ class RealtimeAnalyzer {
         const pair = botState.scannerCache.find(p => p.symbol === symbol);
         if (!pair) return;
 
-        const { triggerPrice, slPriceReference, settings } = pendingSignal;
+        const { triggerPrice, slPriceReference, settings, profileName } = pendingSignal;
         
         let obv5mCondition = true;
         if (settings.USE_OBV_5M_VALIDATION) {
@@ -608,7 +609,7 @@ class RealtimeAnalyzer {
         
         if (isValid) {
             this.log('TRADE', `[MTF] SUCCESS: 5m candle for ${symbol} confirmed breakout. Proceeding to trade.`);
-            const tradeOpened = await tradingEngine.evaluateAndOpenTrade(pair, slPriceReference, settings);
+            const tradeOpened = await tradingEngine.evaluateAndOpenTrade(pair, slPriceReference, settings, profileName);
             if (tradeOpened) {
                 pair.is_on_hotlist = false;
                 removeSymbolFromMicroStreams(symbol);
@@ -650,7 +651,7 @@ class RealtimeAnalyzer {
         }
     }
 
-    handleNewKline(symbol, interval, kline) {
+    async handleNewKline(symbol, interval, kline) {
         if(symbol === 'BTCUSDT' && interval === '1m' && kline.closeTime) {
             checkGlobalSafetyRules();
         }
@@ -668,31 +669,21 @@ class RealtimeAnalyzer {
         if (interval === '15m') {
             this.analyze15mIndicators(symbol);
         } else if (interval === '5m') {
-            this.validate5mConfirmation(symbol, kline);
+            await this.validate5mConfirmation(symbol, kline);
         } else if (interval === '1m') {
-            // Get correct settings profile for this specific moment
-            let tradeSettings = { ...botState.settings };
-            if (botState.settings.USE_DYNAMIC_PROFILE_SELECTOR) {
-                const pair = botState.scannerCache.find(p => p.symbol === symbol);
-                if(pair) {
-                    if (pair.adx_15m !== undefined && pair.adx_15m < tradeSettings.ADX_THRESHOLD_RANGE) {
-                        tradeSettings = { ...tradeSettings, ...settingProfiles['Le Scalpeur'] };
-                    } else if (pair.atr_pct_15m !== undefined && pair.atr_pct_15m > tradeSettings.ATR_PCT_THRESHOLD_VOLATILE) {
-                        tradeSettings = { ...tradeSettings, ...settingProfiles['Le Chasseur de Volatilité'] };
-                    } else {
-                        tradeSettings = { ...tradeSettings, ...settingProfiles['Le Sniper'] };
-                    }
-                }
-            }
+            const pair = botState.scannerCache.find(p => p.symbol === symbol);
+            if (!pair) return;
+
+            const { profileName, tradeSettings } = getActiveProfileAndSettings(pair, botState.settings);
 
             // Check 1: Look for new trade triggers
-            this.checkFor1mTrigger(symbol, tradeSettings);
+            await this.checkFor1mTrigger(symbol, tradeSettings, profileName);
 
             // Check 2: Look for scaling-in confirmations on existing trades
             if (tradeSettings.SCALING_IN_CONFIG && tradeSettings.SCALING_IN_CONFIG.trim() !== '') {
                 const position = botState.activePositions.find(p => p.symbol === symbol && p.is_scaling_in);
                 if (position && kline.close > kline.open) { // Bullish confirmation candle
-                    tradingEngine.scaleInPosition(position, kline.close, tradeSettings);
+                    await tradingEngine.scaleInPosition(position, kline.close, tradeSettings);
                 }
             }
         }
@@ -726,7 +717,7 @@ function connectToBinanceStreams() {
         }
     });
 
-    binanceWs.on('message', (data) => {
+    binanceWs.on('message', async (data) => {
         try {
             const msg = JSON.parse(data);
             if (msg.e === 'kline') {
@@ -737,7 +728,7 @@ function connectToBinanceStreams() {
                         low: parseFloat(kline.l), close: parseFloat(kline.c), volume: parseFloat(kline.v),
                         closeTime: kline.T,
                     };
-                    realtimeAnalyzer.handleNewKline(symbol, kline.i, formattedKline);
+                    await realtimeAnalyzer.handleNewKline(symbol, kline.i, formattedKline);
                 }
             } else if (msg.e === '24hrTicker') {
                 const symbol = msg.s;
@@ -892,7 +883,7 @@ let botState = {
     passwordHash: '',
     recentlyLostSymbols: new Map(), // symbol -> { until: timestamp }
     hotlist: new Set(), // Symbols ready for 1m precision entry
-    pendingConfirmation: new Map(), // symbol -> { triggerPrice, triggerTimestamp, slPriceReference, settings }
+    pendingConfirmation: new Map(), // symbol -> { triggerPrice, triggerTimestamp, slPriceReference, settings, profileName }
     priceCache: new Map(), // symbol -> { price: number }
     circuitBreakerStatus: 'NONE', // NONE, WARNING_BTC_DROP, HALTED_BTC_DROP, HALTED_DRAWDOWN, PAUSED_LOSS_STREAK, PAUSED_EXTREME_SENTIMENT
     dayStartBalance: 10000,
@@ -982,9 +973,28 @@ const settingProfiles = {
     }
 };
 
+const getActiveProfileAndSettings = (pair, baseSettings) => {
+    let profileName = 'PERSONNALISE';
+    let tradeSettings = { ...baseSettings };
+
+    if (baseSettings.USE_DYNAMIC_PROFILE_SELECTOR && pair) {
+        if (pair.adx_15m !== undefined && pair.adx_15m < baseSettings.ADX_THRESHOLD_RANGE) {
+            profileName = 'Le Scalpeur';
+            tradeSettings = { ...tradeSettings, ...settingProfiles['Le Scalpeur'] };
+        } else if (pair.atr_pct_15m !== undefined && pair.atr_pct_15m > baseSettings.ATR_PCT_THRESHOLD_VOLATILE) {
+            profileName = 'Le Chasseur de Volatilité';
+            tradeSettings = { ...tradeSettings, ...settingProfiles['Le Chasseur de Volatilité'] };
+        } else {
+            profileName = 'Le Sniper';
+            tradeSettings = { ...tradeSettings, ...settingProfiles['Le Sniper'] };
+        }
+    }
+    return { profileName, tradeSettings };
+};
+
 // --- Trading Engine ---
 const tradingEngine = {
-    async evaluateAndOpenTrade(pair, slPriceReference, tradeSettings) {
+    async evaluateAndOpenTrade(pair, slPriceReference, tradeSettings, profileName) {
         if (!botState.isRunning) return false;
         if (botState.circuitBreakerStatus.startsWith('HALTED') || botState.circuitBreakerStatus.startsWith('PAUSED')) {
             log('WARN', `Trade for ${pair.symbol} blocked: Global Circuit Breaker is active (${botState.circuitBreakerStatus}).`);
@@ -1110,6 +1120,7 @@ const tradingEngine = {
             log('ERROR', `Calculated risk is zero or negative for ${pair.symbol}. SL: ${stopLoss}, Entry: ${entryPrice}. Aborting trade.`);
             return false;
         }
+        const initial_risk_usd = riskPerUnit * initial_quantity;
         
         const takeProfit = entryPrice + (riskPerUnit * tradeSettings.RISK_REWARD_RATIO);
 
@@ -1138,6 +1149,8 @@ const tradingEngine = {
             current_entry_count: 1,
             total_entries: scalingInPercents.length,
             scaling_in_percents: scalingInPercents,
+            profile_name: profileName,
+            initial_risk_usd: initial_risk_usd,
         };
 
         log('TRADE', `>>> FIRING TRADE (ENTRY 1/${newTrade.total_entries}) <<< Opening ${botState.tradingMode} trade for ${pair.symbol}: Qty=${initial_quantity.toFixed(4)}, Entry=$${entryPrice}`);
@@ -1146,12 +1159,12 @@ const tradingEngine = {
         botState.activePositions.push(newTrade);
         botState.balance -= initial_cost;
         
-        saveData('state');
+        await saveData('state');
         broadcast({ type: 'POSITIONS_UPDATED' });
         return true;
     },
 
-    scaleInPosition(position, newPrice, tradeSettings) {
+    async scaleInPosition(position, newPrice, tradeSettings) {
         if (!position.scaling_in_percents || position.current_entry_count >= position.total_entries) return;
         
         const nextEntryPercent = position.scaling_in_percents[position.current_entry_count];
@@ -1185,11 +1198,11 @@ const tradingEngine = {
             log('TRADE', `[SCALING IN] Final entry for ${position.symbol} complete.`);
         }
 
-        saveData('state');
+        await saveData('state');
         broadcast({ type: 'POSITIONS_UPDATED' });
     },
 
-    monitorAndManagePositions() {
+    async monitorAndManagePositions() {
         if (!botState.isRunning) return;
 
         // Check for timed-out pending confirmations
@@ -1289,7 +1302,7 @@ const tradingEngine = {
             positionsToClose.forEach(({ trade, exitPrice, reason }) => {
                 this.closeTrade(trade.id, exitPrice, reason);
             });
-            saveData('state');
+            await saveData('state');
             broadcast({ type: 'POSITIONS_UPDATED' });
         }
     },
@@ -1313,6 +1326,11 @@ const tradingEngine = {
 
         trade.pnl = pnl;
         trade.pnl_pct = (pnl / initialFullPositionValue) * 100;
+
+        const achieved_r_multiple = trade.initial_risk_usd && trade.initial_risk_usd > 0
+            ? pnl / trade.initial_risk_usd
+            : 0;
+        trade.achieved_r_multiple = achieved_r_multiple;
 
         botState.balance += trade.total_cost_usd + pnl;
         
@@ -1484,9 +1502,9 @@ const startBot = () => {
     runScannerCycle(); 
     scannerInterval = setInterval(runScannerCycle, botState.settings.SCANNER_DISCOVERY_INTERVAL_SECONDS * 1000);
     
-    setInterval(() => {
+    setInterval(async () => {
         if (botState.isRunning) {
-            tradingEngine.monitorAndManagePositions();
+            await tradingEngine.monitorAndManagePositions();
         }
     }, 1000); // Manage positions every second for high-frequency checks
     
@@ -1656,7 +1674,7 @@ app.post('/api/open-trade', requireAuth, (req, res) => {
     res.status(501).json({ message: 'Manual trade opening not implemented.' });
 });
 
-app.post('/api/close-trade/:id', requireAuth, (req, res) => {
+app.post('/api/close-trade/:id', requireAuth, async (req, res) => {
     const tradeId = parseInt(req.params.id, 10);
     const trade = botState.activePositions.find(t => t.id === tradeId);
     if (!trade) return res.status(404).json({ message: 'Trade not found.' });
@@ -1666,7 +1684,7 @@ app.post('/api/close-trade/:id', requireAuth, (req, res) => {
 
     const closedTrade = tradingEngine.closeTrade(tradeId, exitPrice, 'Manual Close');
     if (closedTrade) {
-        saveData('state');
+        await saveData('state');
         broadcast({ type: 'POSITIONS_UPDATED' });
         res.json(closedTrade);
     } else {
