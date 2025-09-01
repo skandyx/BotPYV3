@@ -75,8 +75,9 @@ const ConditionDots: React.FC<{ conditions?: StrategyConditions }> = ({ conditio
         squeeze: 'Compression 15m (BB Squeeze)',
         breakout: 'Cassure 1m (Clôture > EMA9)',
         volume: 'Volume 1m (Volume > 1.5x Moyenne)',
-        obv: 'Confirmation Volume (OBV haussier)',
+        obv: 'Confirmation Volume (OBV 1m haussier)',
         safety: 'Sécurité 1h (RSI < Seuil)',
+        rsi_mtf: 'Sécurité 15m (RSI < Seuil)',
         structure: 'Confirmation Structurelle (Prix > Plus Haut 15m Précédent)',
     };
 
@@ -87,6 +88,7 @@ const ConditionDots: React.FC<{ conditions?: StrategyConditions }> = ({ conditio
             <Dot active={conditions?.volume ?? false} tooltip={conditionTooltips.volume} />
             <Dot active={conditions?.obv ?? false} tooltip={conditionTooltips.obv} />
             <Dot active={conditions?.safety ?? false} tooltip={conditionTooltips.safety} />
+            <Dot active={conditions?.rsi_mtf ?? false} tooltip={conditionTooltips.rsi_mtf} />
             <Dot active={conditions?.structure ?? false} tooltip={conditionTooltips.structure} />
         </div>
     );
@@ -195,9 +197,8 @@ const ScannerPage: React.FC = () => {
     return 'text-red-400';
   };
 
-  const getRsiColorClass = (rsi?: number): string => {
-    if (!rsi || !settings) return 'text-gray-500';
-    const threshold = settings.RSI_OVERBOUGHT_THRESHOLD;
+  const getRsiColorClass = (rsi: number | undefined, threshold: number): string => {
+    if (rsi === undefined) return 'text-gray-500';
     if (rsi >= threshold) return 'text-red-400 font-bold';
     if (rsi >= threshold - 10) return 'text-yellow-400';
     return 'text-green-400';
@@ -228,7 +229,7 @@ const ScannerPage: React.FC = () => {
     return <div className="flex justify-center items-center h-64"><Spinner /></div>;
   }
   
-  const totalColumnCount = 14;
+  const totalColumnCount = 15;
 
   return (
     <div className="space-y-6">
@@ -278,8 +279,9 @@ const ScannerPage: React.FC = () => {
                         <th scope="col" className="px-2 sm:px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Tendance 4h</th>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="score">Score Global</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="trend_score">Score Tendance</SortableHeader>
-                        <th scope="col" className="px-2 sm:px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Conditions (6)</th>
+                        <th scope="col" className="px-2 sm:px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Conditions (7)</th>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="rsi_1h">RSI 1h</SortableHeader>
+                        <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="rsi_15m">RSI 15m</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="volume">Volume 24h</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="adx_15m">ADX 15m</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="atr_pct_15m">ATR % 15m</SortableHeader>
@@ -314,7 +316,7 @@ const ScannerPage: React.FC = () => {
                                     </td>
                                     <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm">
                                         <span className={`px-2.5 py-1 text-xs font-semibold rounded-full min-w-[140px] text-center ${scoreDisplay.className}`}>
-                                            {scoreDisplay.text} ({pair.conditions_met_count ?? 0}/7)
+                                            {scoreDisplay.text} ({pair.conditions_met_count ?? 0}/8)
                                         </span>
                                     </td>
                                     <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-bold ${getTrendScoreColorClass(pair.trend_score)}`}>
@@ -323,8 +325,11 @@ const ScannerPage: React.FC = () => {
                                     <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap">
                                         <ConditionDots conditions={pair.conditions} />
                                     </td>
-                                    <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm ${getRsiColorClass(pair.rsi_1h)}`}>
+                                    <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm ${getRsiColorClass(pair.rsi_1h, settings.RSI_OVERBOUGHT_THRESHOLD)}`}>
                                         {pair.rsi_1h?.toFixed(1) || 'N/A'}
+                                    </td>
+                                    <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm ${getRsiColorClass(pair.rsi_15m, settings.RSI_15M_OVERBOUGHT_THRESHOLD)}`}>
+                                        {pair.rsi_15m?.toFixed(1) || 'N/A'}
                                     </td>
                                     <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-400">${(pair.volume / 1_000_000).toFixed(2)}M</td>
                                      <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm ${getAdxColorClass(pair.adx_15m)}`} title="Force de la Tendance ( < 20 = Range, > 40 = Fort)">

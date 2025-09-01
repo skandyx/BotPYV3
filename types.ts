@@ -69,9 +69,10 @@ export interface StrategyConditions {
     squeeze: boolean;
     breakout: boolean;
     volume: boolean;
-    safety: boolean;
+    safety: boolean; // 1h RSI
     structure?: boolean;
-    obv?: boolean; // New: On-Balance Volume confirmation
+    obv?: boolean; // 1m OBV
+    rsi_mtf?: boolean; // New: 15m RSI safety check
 }
 
 export interface ScannedPair {
@@ -83,6 +84,7 @@ export interface ScannedPair {
     // --- Core Strategy Indicators ---
     price_above_ema50_4h?: boolean; // Master trend filter
     rsi_1h?: number; // Safety filter (anti-overheating)
+    rsi_15m?: number; // New: MTF safety filter
     bollinger_bands_15m?: { upper: number; middle: number; lower: number; width_pct: number; }; // Preparation/Trigger
     is_in_squeeze_15m?: boolean; // Preparation
     volume_20_period_avg_15m?: number; // Confirmation
@@ -95,7 +97,7 @@ export interface ScannedPair {
     score_value?: number; // Numerical representation of the score
     trend_score?: number; // Nuanced score of trend strength (0-100)
     conditions?: StrategyConditions;
-    conditions_met_count?: number; // From 0 to 7
+    conditions_met_count?: number; // From 0 to 8
     is_on_hotlist?: boolean; // New: True if conditions are met for 1m precision entry
 }
 
@@ -203,6 +205,13 @@ export interface BotSettings {
     // --- ADVANCED ENTRY CONFIRMATION ---
     USE_MTF_VALIDATION: boolean;
     USE_OBV_VALIDATION: boolean;
+
+    // --- NEW ADVANCED CONFIRMATION FILTERS ---
+    USE_RSI_MTF_FILTER: boolean; // New: Multi-timeframe RSI check
+    RSI_15M_OVERBOUGHT_THRESHOLD: number; // New
+    USE_WICK_DETECTION_FILTER: boolean; // New: Check for large upper wicks on trigger candle
+    MAX_UPPER_WICK_PCT: number; // New
+    USE_OBV_5M_VALIDATION: boolean; // New: Validate OBV on 5m chart after confirmation
 
     // --- PORTFOLIO INTELLIGENCE ---
     SCALING_IN_CONFIG: string; // New: Flexible scaling in, e.g., "50,50" or "40,30,30"

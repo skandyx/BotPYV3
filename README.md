@@ -87,9 +87,13 @@ Pour les paires sur la Hotlist, le bot analyse chaque bougie d'une minute pour t
     *   **Règle 2b** : L'indicateur **OBV** sur 1 minute doit avoir une pente ascendante, confirmant que la pression acheteuse est réelle et soutenue.
 *   **Condition 3 : Validation Multi-Temporelle (La Confirmation - 5m)**
     *   **Règle** : Après le signal 1m, le bot met le trade en **attente**. Il attend la clôture de la bougie de 5 minutes en cours. Le trade n'est exécuté que si cette bougie de 5 minutes clôture également de manière haussière et au-dessus du prix de déclenchement initial. **Ceci est le filtre anti "fake breakout" le plus puissant.**
-*   **Condition 4 : Filtres de Sécurité (Anti-Surchauffe - 1h)**
-    *   **Règle** : Le bot vérifie que le RSI sur 1 heure n'est pas en zone de surachat et que le prix n'a pas connu une hausse verticale insoutenable juste avant le signal (`Filtre Parabolique`).
-*   **Action** : Si toutes les conditions (1, 2a, 2b, 3, 4) sont remplies, un **signal d'entrée de haute qualité** est généré. Le bot passe à la Phase 2.5.
+*   **Condition 4 : Filtres de Sécurité Avancés (Anti-Piège)**
+    *   **Règle 4a (RSI 1h & 15m)** : Le RSI sur 1 heure ET sur 15 minutes ne doivent pas être en zone de surachat.
+    *   **Règle 4b (Mèches)** : La bougie de déclenchement 1m ne doit pas avoir une mèche supérieure anormalement grande (signe de rejet).
+    *   **Règle 4c (Parabolique)** : Le prix ne doit pas avoir connu une hausse verticale insoutenable juste avant le signal.
+*   **Condition 5 : Confirmation OBV Multi-Échelles (Force Durable - 5m)**
+    *   **Règle** : Après la validation de la bougie de 5m (Condition 3), le bot vérifie que l'OBV sur 5 minutes est également en tendance haussière.
+*   **Action** : Si toutes les conditions sont remplies, un **signal d'entrée de haute qualité** est généré. Le bot passe à la Phase 2.5.
 
 ---
 

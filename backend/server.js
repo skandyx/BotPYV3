@@ -250,6 +250,13 @@ const loadData = async () => {
             USE_MTF_VALIDATION: isNotFalse('USE_MTF_VALIDATION'),
             USE_OBV_VALIDATION: isNotFalse('USE_OBV_VALIDATION'),
             
+            // --- NEW ADVANCED CONFIRMATION FILTERS ---
+            USE_RSI_MTF_FILTER: isTrue('USE_RSI_MTF_FILTER'),
+            RSI_15M_OVERBOUGHT_THRESHOLD: parseInt(process.env.RSI_15M_OVERBOUGHT_THRESHOLD, 10) || 70,
+            USE_WICK_DETECTION_FILTER: isTrue('USE_WICK_DETECTION_FILTER'),
+            MAX_UPPER_WICK_PCT: parseFloat(process.env.MAX_UPPER_WICK_PCT) || 50,
+            USE_OBV_5M_VALIDATION: isTrue('USE_OBV_5M_VALIDATION'),
+            
             // --- PORTFOLIO INTELLIGENCE ---
             SCALING_IN_CONFIG: process.env.SCALING_IN_CONFIG || "50,50",
             MAX_CORRELATED_TRADES: parseInt(process.env.MAX_CORRELATED_TRADES, 10) || 2,
@@ -389,19 +396,19 @@ class RealtimeAnalyzer {
         const bbResult = BollingerBands.calculate({ period: 20, values: closes15m, stdDev: 2 });
         const atrResult = ATR.calculate({ high: highs15m, low: lows15m, close: closes15m, period: 14 });
         const adxResult = ADX.calculate({ high: highs15m, low: lows15m, close: closes15m, period: 14 });
+        const rsi15m = RSI.calculate({ period: 14, values: closes15m }).pop();
 
         if (bbResult.length < 2 || !atrResult.length) return;
 
         const lastCandle = klines15m[klines15m.length - 1];
         
-        // Update indicators for dynamic profile selection
+        // Update indicators
         pairToUpdate.atr_15m = atrResult[atrResult.length - 1];
         pairToUpdate.adx_15m = adxResult.length ? adxResult[adxResult.length - 1].adx : undefined;
         pairToUpdate.atr_pct_15m = pairToUpdate.atr_15m ? (pairToUpdate.atr_15m / lastCandle.close) * 100 : undefined;
+        pairToUpdate.rsi_15m = rsi15m;
 
         const lastBB = bbResult[bbResult.length - 1];
-
-        // Update pair with CURRENT BB width for display purposes
         const currentBbWidthPct = (lastBB.upper - lastBB.lower) / lastBB.middle * 100;
         pairToUpdate.bollinger_bands_15m = { ...lastBB, width_pct: currentBbWidthPct };
 
@@ -431,7 +438,7 @@ class RealtimeAnalyzer {
 
         const volumeConditionMet = lastCandle.volume > (avgVolume * 2);
 
-        // --- "Hotlist" Logic using the CORRECTED squeeze state ---
+        // --- "Hotlist" Logic ---
         const isTrendOK = pairToUpdate.price_above_ema50_4h === true && (pairToUpdate.trend_score || 0) > 50;
         const isOnHotlist = isTrendOK && wasInSqueeze;
         pairToUpdate.is_on_hotlist = isOnHotlist;
@@ -461,11 +468,11 @@ class RealtimeAnalyzer {
         const highOfPrevious15m = previous15mCandle.high;
         const structureConditionMet = pairToUpdate.price > highOfPrevious15m;
         
-        // This is a snapshot of potential conditions, real-time OBV is calculated on 1m
         const conditions = {
             trend: isTrendOK,
             squeeze: wasInSqueeze,
             safety: pairToUpdate.rsi_1h !== undefined && pairToUpdate.rsi_1h < this.settings.RSI_OVERBOUGHT_THRESHOLD,
+            rsi_mtf: pairToUpdate.rsi_15m !== undefined && pairToUpdate.rsi_15m < this.settings.RSI_15M_OVERBOUGHT_THRESHOLD,
             breakout: isBreakout,
             volume: volumeConditionMet,
             structure: structureConditionMet,
@@ -474,7 +481,7 @@ class RealtimeAnalyzer {
         const conditionsMetCount = Object.values(conditions).filter(Boolean).length;
         pairToUpdate.conditions = conditions;
         pairToUpdate.conditions_met_count = conditionsMetCount;
-        pairToUpdate.score_value = (conditionsMetCount / 7) * 100;
+        pairToUpdate.score_value = (conditionsMetCount / 8) * 100;
         pairToUpdate.score = finalScore;
 
         if (pairToUpdate.score !== old_score || pairToUpdate.is_on_hotlist !== old_hotlist_status) {
@@ -488,11 +495,10 @@ class RealtimeAnalyzer {
         if (!pair || !pair.is_on_hotlist || botState.pendingConfirmation.has(symbol)) return;
 
         const klines1m = this.klineData.get(symbol)?.get('1m');
-        if (!klines1m || klines1m.length < 61) return; // Need 60 for hourly avg volume + 1
+        if (!klines1m || klines1m.length < 61) return;
 
         const closes1m = klines1m.map(k => k.close);
         const volumes1m = klines1m.map(k => k.volume);
-
         const lastEma9 = EMA.calculate({ period: 9, values: closes1m }).pop();
         const avgVolume = volumes1m.slice(-21, -1).reduce((sum, v) => sum + v, 0) / 20;
 
@@ -500,21 +506,41 @@ class RealtimeAnalyzer {
         
         const triggerCandle = klines1m[klines1m.length - 1];
         
-        const momentumCondition = triggerCandle.close > lastEma9;
-        const volumeSpikeCondition = triggerCandle.volume > avgVolume * 1.5;
+        // --- ADVANCED ANTI-FAKE OUT FILTERS ---
+        if (tradeSettings.USE_RSI_MTF_FILTER) {
+            if (pair.rsi_15m === undefined || pair.rsi_15m >= tradeSettings.RSI_15M_OVERBOUGHT_THRESHOLD) {
+                log('TRADE', `[RSI MTF FILTER] Rejected ${symbol}. 15m RSI (${pair.rsi_15m?.toFixed(1)}) is over threshold (${tradeSettings.RSI_15M_OVERBOUGHT_THRESHOLD}).`);
+                return;
+            }
+        }
 
-        // Whale Manipulation Filter
+        if (tradeSettings.USE_WICK_DETECTION_FILTER) {
+            const candleHeight = triggerCandle.high - triggerCandle.low;
+            if (candleHeight > 0) {
+                const upperWick = triggerCandle.high - triggerCandle.close;
+                const wickPercentage = (upperWick / candleHeight) * 100;
+                if (wickPercentage > tradeSettings.MAX_UPPER_WICK_PCT) {
+                    log('TRADE', `[WICK FILTER] Rejected ${symbol}. Upper wick (${wickPercentage.toFixed(1)}%) exceeds threshold (${tradeSettings.MAX_UPPER_WICK_PCT}%).`);
+                    return;
+                }
+            }
+        }
+        
         if (tradeSettings.USE_WHALE_MANIPULATION_FILTER) {
             const last60mVolumes = volumes1m.slice(-61, -1);
             const hourlyAvgVolume = last60mVolumes.reduce((sum, v) => sum + v, 0) / 60;
             const thresholdVolume = hourlyAvgVolume * (tradeSettings.WHALE_SPIKE_THRESHOLD_PCT / 100);
             if (triggerCandle.volume > thresholdVolume) {
-                this.log('TRADE', `[WHALE FILTER] Rejected ${symbol}. 1m volume (${triggerCandle.volume.toFixed(0)}) exceeded threshold (${thresholdVolume.toFixed(0)}).`);
-                return; // Abort
+                log('TRADE', `[WHALE FILTER] Rejected ${symbol}. 1m volume (${triggerCandle.volume.toFixed(0)}) exceeded threshold (${thresholdVolume.toFixed(0)}).`);
+                return;
             }
         }
 
-        let obvCondition = true; // Default to true if not used
+        // --- CORE TRIGGER CONDITIONS ---
+        const momentumCondition = triggerCandle.close > lastEma9;
+        const volumeSpikeCondition = triggerCandle.volume > avgVolume * 1.5;
+
+        let obvCondition = true;
         if (tradeSettings.USE_OBV_VALIDATION) {
             const obvValues = calculateOBV(klines1m);
             if (obvValues.length > 5) {
@@ -522,11 +548,11 @@ class RealtimeAnalyzer {
                 const obvSma = SMA.calculate({ period: 5, values: obvValues }).pop();
                 obvCondition = lastObv > obvSma;
             } else {
-                obvCondition = false; // Not enough data for OBV check
+                obvCondition = false;
             }
         }
         
-        pair.conditions.obv = obvCondition; // Update condition dot
+        pair.conditions.obv = obvCondition;
 
         if (momentumCondition && volumeSpikeCondition && obvCondition) {
             this.log('TRADE', `[1m TRIGGER] Signal for ${symbol}. Momentum, Volume, OBV all OK.`);
@@ -559,7 +585,26 @@ class RealtimeAnalyzer {
         if (!pair) return;
 
         const { triggerPrice, slPriceReference, settings } = pendingSignal;
-        const isValid = new5mCandle.close > triggerPrice && new5mCandle.close > new5mCandle.open;
+        
+        let obv5mCondition = true;
+        if (settings.USE_OBV_5M_VALIDATION) {
+            const klines5m = this.klineData.get(symbol)?.get('5m');
+            if (klines5m && klines5m.length > 5) {
+                const obvValues = calculateOBV(klines5m);
+                if (obvValues.length > 5) {
+                    const lastObv = obvValues[obvValues.length - 1];
+                    const obvSma = SMA.calculate({ period: 5, values: obvValues.slice(0, -1) }).pop();
+                    obv5mCondition = lastObv > obvSma;
+                } else {
+                    obv5mCondition = false;
+                }
+            } else {
+                obv5mCondition = false;
+            }
+        }
+
+        const candleIsValid = new5mCandle.close > triggerPrice && new5mCandle.close > new5mCandle.open;
+        const isValid = candleIsValid && obv5mCondition;
         
         if (isValid) {
             this.log('TRADE', `[MTF] SUCCESS: 5m candle for ${symbol} confirmed breakout. Proceeding to trade.`);
@@ -569,7 +614,8 @@ class RealtimeAnalyzer {
                 removeSymbolFromMicroStreams(symbol);
             }
         } else {
-            this.log('TRADE', `[MTF] FAILED: 5m candle for ${symbol} did not confirm. Invalidating signal.`);
+            const reason = !candleIsValid ? "5m candle did not confirm" : "5m OBV did not confirm";
+            this.log('TRADE', `[MTF] FAILED: ${reason} for ${symbol}. Invalidating signal.`);
             pair.score = 'FAKE_BREAKOUT';
         }
         

@@ -139,7 +139,12 @@ const tooltips: Record<string, string> = {
     MIN_ORDER_BOOK_LIQUIDITY_USD: "La quantité minimale de liquidité (en USD) qui doit être disponible dans ±0.5% du prix actuel pour que le trade soit autorisé.",
     USE_SECTOR_CORRELATION_FILTER: "Empêcher d'ouvrir des trades sur plusieurs actifs du même secteur (ex: L1, L2, DeFi) simultanément pour améliorer la diversification.",
     USE_WHALE_MANIPULATION_FILTER: "Détecter et ignorer les signaux d'entrée causés par des pics de volume anormaux sur une seule bougie, qui sont souvent des pièges.",
-    WHALE_SPIKE_THRESHOLD_PCT: "Le pourcentage du volume horaire moyen. Si une bougie de 1 minute dépasse ce seuil (ex: 5%), le signal est considéré comme une manipulation."
+    WHALE_SPIKE_THRESHOLD_PCT: "Le pourcentage du volume horaire moyen. Si une bougie de 1 minute dépasse ce seuil (ex: 5%), le signal est considéré comme une manipulation.",
+    USE_RSI_MTF_FILTER: "Filtre de Sécurité RSI Multi-Temporel : Vérifie que le RSI sur 15 minutes n'est pas déjà en zone de surchauffe, pour éviter les entrées tardives.",
+    RSI_15M_OVERBOUGHT_THRESHOLD: "Le seuil RSI sur 15 minutes au-delà duquel un signal d'achat sera ignoré.",
+    USE_WICK_DETECTION_FILTER: "Filtre Anti-Piège : rejette les signaux d'entrée si la bougie de déclenchement a une mèche supérieure anormalement grande, indiquant un rejet du prix.",
+    MAX_UPPER_WICK_PCT: "Le pourcentage maximum de la mèche supérieure par rapport à la taille totale de la bougie. Au-delà de ce seuil, le signal est ignoré.",
+    USE_OBV_5M_VALIDATION: "Confirmation de Volume Multi-Échelles : Exige que la tendance de l'OBV soit également haussière sur l'unité de temps de 5 minutes après la confirmation, pour éviter les divergences."
 };
 
 const inputClass = "mt-1 block w-full rounded-md border-[#3e4451] bg-[#0c0e12] shadow-sm focus:border-[#f0b90b] focus:ring-[#f0b90b] sm:text-sm text-white";
@@ -498,8 +503,20 @@ const SettingsPage: React.FC = () => {
                     <div className="bg-[#14181f]/50 border border-[#2b2f38] rounded-lg p-6 shadow-lg">
                         <h3 className="text-lg font-semibold text-white mb-4">Filtres de Confirmation d'Entrée</h3>
                         <div className="space-y-4">
-                           <ToggleField id="USE_OBV_VALIDATION" label="Confirmation par Volume (OBV)" />
+                           <ToggleField id="USE_OBV_VALIDATION" label="Confirmation par Volume (OBV 1m)" />
                            <ToggleField id="USE_MTF_VALIDATION" label="Validation Multi-Temporelle (5m)" />
+                           <hr className="border-gray-700"/>
+                           <ToggleField id="USE_OBV_5M_VALIDATION" label="Validation OBV Multi-Échelles (5m)" />
+                           <hr className="border-gray-700"/>
+                           <ToggleField id="USE_RSI_MTF_FILTER" label="Filtre RSI Multi-Temporel (15m)" />
+                           <div className={`transition-opacity ${settings.USE_RSI_MTF_FILTER ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <InputField id="RSI_15M_OVERBOUGHT_THRESHOLD" label="Seuil RSI 15m" />
+                           </div>
+                           <hr className="border-gray-700"/>
+                           <ToggleField id="USE_WICK_DETECTION_FILTER" label="Filtre de Mèches Anormales" />
+                           <div className={`transition-opacity ${settings.USE_WICK_DETECTION_FILTER ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                               <InputField id="MAX_UPPER_WICK_PCT" label="Mèche Supérieure Max (%)" />
+                           </div>
                         </div>
                     </div>
 

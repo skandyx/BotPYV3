@@ -37,6 +37,17 @@ USE_MTF_VALIDATION=true
 # Utiliser la confirmation de volume par On-Balance Volume (OBV). (true/false)
 USE_OBV_VALIDATION=true
 
+# --- NEW ADVANCED CONFIRMATION FILTERS ---
+# Utiliser un filtre RSI multi-temporels (15m) pour éviter les entrées tardives. (true/false)
+USE_RSI_MTF_FILTER=true
+RSI_15M_OVERBOUGHT_THRESHOLD=70
+# Activer la détection des mèches de bougie anormales pour éviter les pièges. (true/false)
+USE_WICK_DETECTION_FILTER=true
+# Pourcentage maximum de la mèche supérieure par rapport à la taille totale de la bougie.
+MAX_UPPER_WICK_PCT=50
+# Valider la tendance de l'OBV également sur la bougie de confirmation de 5 minutes. (true/false)
+USE_OBV_5M_VALIDATION=true
+
 # --- ADVANCED STRATEGY & RISK MANAGEMENT ---
 # Utiliser un Stop Loss dynamique basé sur l'ATR. (true/false)
 USE_ATR_STOP_LOSS=true
