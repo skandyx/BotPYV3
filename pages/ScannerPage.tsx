@@ -345,10 +345,10 @@ const ScannerPage: React.FC = () => {
                                         {pair.rsi_15m?.toFixed(1) || 'N/A'}
                                     </td>
                                     <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-400">${(pair.volume / 1_000_000).toFixed(2)}M</td>
-                                     <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm ${getAdxColorClass(pair.adx_15m)}`} title={`Force de la Tendance ( < ${settings.ADX_THRESHOLD_RANGE} = Range, > 40 = Fort)`}>
+                                     <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm ${getAdxColorClass(pair.adx_15m)}`} title="Force de la Tendance ( < 20 = Range, > 40 = Fort)">
                                         {pair.adx_15m?.toFixed(1) || 'N/A'}
                                     </td>
-                                    <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm ${getAtrPctColorClass(pair.atr_pct_15m)}`} title={`Volatilité en % du Prix ( > ${settings.ATR_PCT_THRESHOLD_VOLATILE}% = Volatil)`}>
+                                    <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm ${getAtrPctColorClass(pair.atr_pct_15m)}`} title="Volatilité en % du Prix">
                                         {pair.atr_pct_15m?.toFixed(2) || 'N/A'}%
                                     </td>
                                     <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm">

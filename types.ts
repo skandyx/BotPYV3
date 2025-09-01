@@ -29,8 +29,6 @@ export interface FearAndGreed {
     classification: string;
 }
 
-export type ProfileName = 'Le Sniper' | 'Le Scalpeur' | 'Le Chasseur de Volatilité' | 'PERSONNALISE';
-
 export interface Trade {
   id: number;
   mode: TradingMode;
@@ -64,8 +62,6 @@ export interface Trade {
   current_entry_count?: number;
   total_entries?: number;
   scaling_in_percents?: number[]; // For flexible scaling in
-  profile_name?: ProfileName;
-  achieved_r_multiple?: number;
 }
 
 export interface StrategyConditions {

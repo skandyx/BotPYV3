@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { api } from '../services/mockApi';
-import { Trade, OrderSide, TradingMode, ScannedPair, ProfileName } from '../types';
+import { Trade, OrderSide, TradingMode, ScannedPair } from '../types';
 import Spinner from '../components/common/Spinner';
 import StatCard from '../components/common/StatCard';
 import { useAppContext } from '../contexts/AppContext';
@@ -9,7 +9,7 @@ import TradingViewWidget from '../components/common/TradingViewWidget';
 
 
 // --- TYPE DEFINITIONS ---
-type SortableKeys = 'symbol' | 'entry_time' | 'exit_time' | 'pnl' | 'pnl_pct' | 'entry_price' | 'exit_price' | 'stop_loss' | 'take_profit' | 'profile_name' | 'achieved_r_multiple';
+type SortableKeys = 'symbol' | 'entry_time' | 'exit_time' | 'pnl' | 'pnl_pct' | 'entry_price' | 'exit_price' | 'stop_loss' | 'take_profit';
 type SortDirection = 'asc' | 'desc';
 
 interface SortConfig {
@@ -39,17 +39,6 @@ const getScoreBadgeClass = (score: ScannedPair['score'] | undefined) => {
         case 'BUY': return 'bg-green-800 text-green-200';
         case 'HOLD': return 'bg-gray-700 text-gray-200';
         case 'COOLDOWN': return 'bg-blue-800 text-blue-200';
-        default: return 'bg-gray-700 text-gray-200';
-    }
-};
-
-const getProfileBadgeClass = (profileName: ProfileName | undefined) => {
-    if (!profileName) return 'bg-gray-700 text-gray-200';
-    switch (profileName) {
-        case 'Le Sniper': return 'bg-sky-800 text-sky-200';
-        case 'Le Scalpeur': return 'bg-gray-600 text-gray-100';
-        case 'Le Chasseur de Volatilité': return 'bg-orange-800 text-orange-200';
-        case 'PERSONNALISE': return 'bg-purple-800 text-purple-200';
         default: return 'bg-gray-700 text-gray-200';
     }
 };
@@ -157,12 +146,11 @@ const HistoryPage: React.FC = () => {
         return;
     }
 
-    const headers = ['ID', 'Symbole', 'Profil', 'Côté', 'Mode', 'Heure d\'Entrée', 'Heure de Sortie', 'Prix d\'Entrée', 'Prix de Sortie', 'Stop Loss', 'Take Profit', 'Quantité', 'PnL ($)', 'PnL %', 'R-Multiple', 'Score Entrée', 'Tendance 4h (EMA50)', 'RSI 1h Entrée'];
+    const headers = ['ID', 'Symbole', 'Côté', 'Mode', 'Heure d\'Entrée', 'Heure de Sortie', 'Prix d\'Entrée', 'Prix de Sortie', 'Stop Loss', 'Take Profit', 'Quantité', 'PnL ($)', 'PnL %', 'Score Entrée', 'Tendance 4h (EMA50)', 'RSI 1h Entrée'];
     
     const rows = filteredAndSortedTrades.map(trade => [
         trade.id,
         `"${trade.symbol}"`,
-        `"${trade.profile_name || 'N/A'}"`,
         trade.side,
         trade.mode,
         `"${trade.entry_time}"`,
@@ -174,7 +162,6 @@ const HistoryPage: React.FC = () => {
         trade.quantity,
         trade.pnl?.toFixed(4) || 'N/A',
         trade.pnl_pct?.toFixed(2) || 'N/A',
-        trade.achieved_r_multiple?.toFixed(2) || 'N/A',
         trade.entry_snapshot?.score || 'N/A',
         trade.entry_snapshot?.price_above_ema50_4h ? 'HAUSSIER' : 'BAISSIER',
         trade.entry_snapshot?.rsi_1h?.toFixed(2) || 'N/A'
@@ -205,7 +192,7 @@ const HistoryPage: React.FC = () => {
   }
 
   const { totalPnl, winningTrades, losingTrades, winRate } = summaryStats;
-  const totalColumns = 16;
+  const totalColumns = 14;
 
   return (
     <div className="space-y-6">
@@ -243,8 +230,8 @@ const HistoryPage: React.FC = () => {
                     <div className={`font-semibold ${getPnlClass(selectedTradeForChart.pnl || 0)}`}>${selectedTradeForChart.pnl?.toFixed(2) ?? 'N/A'}</div>
                 </div>
                  <div className="bg-[#0c0e12]/50 p-2 rounded-md">
-                    <div className="text-gray-400 text-xs">R-Multiple</div>
-                    <div className={`font-semibold ${getPnlClass(selectedTradeForChart.achieved_r_multiple || 0)}`}>{selectedTradeForChart.achieved_r_multiple?.toFixed(2) ?? 'N/A'} R</div>
+                    <div className="text-gray-400 text-xs">PnL (%)</div>
+                    <div className={`font-semibold ${getPnlClass(selectedTradeForChart.pnl_pct || 0)}`}>{selectedTradeForChart.pnl_pct?.toFixed(2) ?? 'N/A'}%</div>
                 </div>
                  <div className="bg-[#0c0e12]/50 p-2 rounded-md">
                     <div className="text-gray-400 text-xs">Heure Entrée</div>
@@ -291,7 +278,6 @@ const HistoryPage: React.FC = () => {
                 <thead className="bg-[#14181f] sticky top-0">
                     <tr>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="symbol">Symbole</SortableHeader>
-                        <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="profile_name">Profil</SortableHeader>
                         <th scope="col" className="px-3 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Côté</th>
                         <th scope="col" className="px-3 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Score Entrée</th>
                         <th scope="col" className="px-3 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Tendance 4h (EMA50)</th>
@@ -304,7 +290,6 @@ const HistoryPage: React.FC = () => {
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="take_profit">Take Profit</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="pnl">PnL ($)</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="pnl_pct">PnL %</SortableHeader>
-                        <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="achieved_r_multiple">R-Multiple</SortableHeader>
                     </tr>
                 </thead>
                 <tbody className="bg-[#14181f]/50 divide-y divide-[#2b2f38]">
@@ -315,11 +300,6 @@ const HistoryPage: React.FC = () => {
                             className="hover:bg-[#2b2f38]/50 cursor-pointer transition-colors"
                         >
                             <td className="px-3 lg:px-6 py-4 whitespace-nowrap text-sm font-medium text-white">{trade.symbol}</td>
-                            <td className="px-3 lg:px-6 py-4 whitespace-nowrap text-sm">
-                                <span className={`px-2.5 py-1 text-xs font-semibold rounded-full ${getProfileBadgeClass(trade.profile_name)}`}>
-                                    {trade.profile_name || 'N/A'}
-                                </span>
-                            </td>
                             <td className={`px-3 lg:px-6 py-4 whitespace-nowrap text-sm font-bold ${getSideClass(trade.side)}`}>{trade.side}</td>
                             <td className="px-3 lg:px-6 py-4 whitespace-nowrap text-sm">
                                 <span className={`px-2.5 py-1 text-xs font-semibold rounded-full ${getScoreBadgeClass(trade.entry_snapshot?.score)}`}>
@@ -338,7 +318,6 @@ const HistoryPage: React.FC = () => {
                             <td className="px-3 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-300">${formatPrice(trade.take_profit)}</td>
                             <td className={`px-3 lg:px-6 py-4 whitespace-nowrap text-sm font-medium ${getPnlClass(trade.pnl)}`}>${trade.pnl?.toFixed(2) || 'N/A'}</td>
                             <td className={`px-3 lg:px-6 py-4 whitespace-nowrap text-sm font-medium ${getPnlClass(trade.pnl_pct)}`}>{trade.pnl_pct?.toFixed(2) || 'N/A'}%</td>
-                            <td className={`px-3 lg:px-6 py-4 whitespace-nowrap text-sm font-medium ${getPnlClass(trade.achieved_r_multiple)}`}>{trade.achieved_r_multiple?.toFixed(2) || 'N/A'} R</td>
                         </tr>
                     ))}
                      {filteredAndSortedTrades.length === 0 && (
