@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { ScannedPair, StrategyConditions } from '../types';
 import Spinner from '../components/common/Spinner';
@@ -162,68 +163,59 @@ const ScannerPage: React.FC = () => {
   }, [pairs, sortConfig, searchQuery]);
   
     const getScoreDisplay = (pair: ScannedPair): { className: string; text: string } => {
-        const scoreValue = pair.score_value;
-
-        if (pair.score === 'PENDING_CONFIRMATION') {
-            return { className: 'bg-sky-600 text-sky-100 animate-pulse', text: 'ATTENTE 5m' };
+        switch (pair.score) {
+            case 'STRONG BUY':
+                return { className: 'bg-green-600 text-green-100', text: 'STRONG BUY' };
+            case 'BUY':
+                return { className: 'bg-sky-600 text-sky-100', text: 'BUY' };
+            case 'COMPRESSION':
+                return { className: 'bg-yellow-600 text-yellow-100', text: 'COMPRESSION' };
+            case 'PENDING_CONFIRMATION':
+                return { className: 'bg-sky-600 text-sky-100 animate-pulse', text: 'ATTENTE 5m' };
+            case 'FAKE_BREAKOUT':
+                return { className: 'bg-red-800 text-red-200', text: 'FAKE BREAKOUT' };
+            case 'COOLDOWN':
+                return { className: 'bg-blue-800 text-blue-200', text: 'COOLDOWN' };
+            case 'HOLD':
+            default:
+                return { className: 'bg-gray-700 text-gray-200', text: 'HOLD' };
         }
-        if (scoreValue === undefined) {
-             return { className: 'bg-gray-700 text-gray-200', text: 'N/A' };
-        }
-        if (scoreValue >= 99) { // 7/7
-            return { className: 'bg-green-600 text-green-100', text: scoreValue.toFixed(0) };
-        }
-        if (scoreValue >= 85) { // 6/7
-            return { className: 'bg-sky-600 text-sky-100', text: scoreValue.toFixed(0) };
-        }
-        if (scoreValue >= 70) { // 5/7
-            return { className: 'bg-yellow-600 text-yellow-100', text: scoreValue.toFixed(0) };
-        }
-        return { className: 'bg-gray-700 text-gray-200', text: scoreValue.toFixed(0) };
     };
 
   
   // --- COLOR CODING HELPERS ---
-    const getTrendScoreColorClass = (score?: number): string => {
-        if (score === undefined || score === null) return 'text-gray-500';
-        if (score >= 90) return 'text-green-400 font-bold';
-        if (score >= 75) return 'text-emerald-400';
-        if (score >= 50) return 'text-yellow-400';
-        return 'text-gray-500';
-    };
-
   const getTrendColorClass = (isAbove?: boolean): string => {
-    if (isAbove === true) return 'text-green-400'; // Favorable
-    if (isAbove === false) return 'text-red-400'; // Unfavorable
-    return 'text-gray-500'; // Neutral / Not available
+    if (isAbove === true) return 'text-green-400';
+    if (isAbove === false) return 'text-red-400';
+    return 'text-gray-500';
   };
 
   const getRsiColorClass = (rsi?: number): string => {
     if (!rsi || !settings) return 'text-gray-500';
     const threshold = settings.RSI_OVERBOUGHT_THRESHOLD;
-    if (rsi >= threshold) return 'text-red-400 font-bold'; // Unfavorable
-    if (rsi >= threshold - 10) return 'text-yellow-400'; // Warning
-    return 'text-green-400'; // Favorable
+    if (rsi >= threshold) return 'text-red-400 font-bold';
+    if (rsi >= threshold - 10) return 'text-yellow-400';
+    return 'text-green-400';
   };
 
   const getBbWidthColorClass = (bbWidth?: number, isInSqueeze?: boolean): string => {
-      if (isInSqueeze) return 'text-sky-300 font-semibold'; // Favorable Squeeze
+      if (isInSqueeze) return 'text-sky-300 font-semibold';
       if (bbWidth === undefined || bbWidth === null) return 'text-gray-500';
-      if (bbWidth < 2.0) return 'text-yellow-400'; // Warning: getting tight
-      return 'text-gray-300'; // Neutral/Wide
+      if (bbWidth < 2.0) return 'text-yellow-400';
+      return 'text-gray-300';
   };
 
   const getAdxColorClass = (adx?: number): string => {
     if (adx === undefined || !settings) return 'text-gray-500';
-    if (adx < settings.ADX_THRESHOLD_RANGE) return 'text-sky-400'; // Ranging
-    if (adx > 40) return 'text-green-400 font-bold'; // Strong trend
-    return 'text-gray-300'; // Developing trend
+    if (adx < settings.ADX_THRESHOLD_RANGE) return 'text-sky-400';
+    if (adx > 40) return 'text-green-400 font-bold';
+    return 'text-gray-300';
   };
 
   const getAtrPctColorClass = (atrPct?: number): string => {
       if (atrPct === undefined || !settings) return 'text-gray-500';
-      if (atrPct > settings.ATR_PCT_THRESHOLD_VOLATILE) return 'text-red-400 font-bold'; // Volatile
-      return 'text-gray-300'; // Normal volatility
+      if (atrPct > settings.ATR_PCT_THRESHOLD_VOLATILE) return 'text-red-400 font-bold';
+      return 'text-gray-300';
   };
 
 
@@ -278,9 +270,9 @@ const ScannerPage: React.FC = () => {
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="is_on_hotlist" className="text-center">Hotlist</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="symbol">Symbole</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="price">Prix</SortableHeader>
-                        <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="score_value">Score Global</SortableHeader>
+                        <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="score">Score Global</SortableHeader>
                         <th scope="col" className="px-2 sm:px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Conditions</th>
-                        <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="trend_score">Score Tendance</SortableHeader>
+                        <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="price_above_ema50_4h">Tendance 4h</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="rsi_1h">RSI 1h</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="volume">Volume 24h</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="adx_15m">ADX 15m</SortableHeader>
@@ -296,6 +288,7 @@ const ScannerPage: React.FC = () => {
                             const bbWidth = pair.bollinger_bands_15m?.width_pct;
                             const scoreDisplay = getScoreDisplay(pair);
                             const rowClass = pair.score === 'PENDING_CONFIRMATION' ? 'bg-sky-900/40' : '';
+                            const trendClass = getTrendColorClass(pair.price_above_ema50_4h);
 
                             return (
                                 <tr 
@@ -312,7 +305,7 @@ const ScannerPage: React.FC = () => {
                                     <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-mono transition-colors duration-200 ${priceClass}`}>${formatPrice(pair.price)}</td>
                                     <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm">
                                         <div className="flex items-center space-x-2">
-                                            <span className={`px-2.5 py-1 text-xs font-semibold rounded-full min-w-[70px] text-center ${scoreDisplay.className}`}>
+                                            <span className={`px-2.5 py-1 text-xs font-semibold rounded-full min-w-[110px] text-center ${scoreDisplay.className}`}>
                                                 {scoreDisplay.text}
                                             </span>
                                             <span className="font-mono text-gray-400 text-xs">
@@ -323,10 +316,8 @@ const ScannerPage: React.FC = () => {
                                     <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap">
                                         <ConditionDots conditions={pair.conditions} />
                                     </td>
-                                    <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-semibold">
-                                        <span className={getTrendScoreColorClass(pair.trend_score)} title={`Force de la tendance 4h : ${pair.trend_score?.toFixed(0)}/100`}>
-                                            {pair.trend_score?.toFixed(0) ?? 'N/A'}
-                                        </span>
+                                     <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-semibold ${trendClass}`}>
+                                        {pair.price_above_ema50_4h === true ? '▲ HAUSSIER' : (pair.price_above_ema50_4h === false ? '▼ BAISSIER' : 'N/A')}
                                     </td>
                                     <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm ${getRsiColorClass(pair.rsi_1h)}`}>
                                         {pair.rsi_1h?.toFixed(1) || 'N/A'}
