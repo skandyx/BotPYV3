@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { ScannedPair, StrategyConditions } from '../types';
 import Spinner from '../components/common/Spinner';
@@ -104,7 +105,7 @@ const ConditionDots: React.FC<{ conditions?: StrategyConditions }> = ({ conditio
 const ScannerPage: React.FC = () => {
   const [pairs, setPairs] = useState<ScannedPair[]>(() => scannerStore.getScannedPairs());
   const [sortConfig, setSortConfig] = useState<SortConfig | null>({ key: 'score_value', direction: 'desc' });
-  const [selectedSymbol, setSelectedSymbol] = useState<string>('SOLUSDT');
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>('SOLUSDT');
   const [searchQuery, setSearchQuery] = useState('');
   const { settings } = useAppContext();
 
@@ -120,10 +121,6 @@ const ScannerPage: React.FC = () => {
       unsubscribe();
     };
   }, []);
-  
-  const selectedPairObject = useMemo(() => {
-    return pairs.find(p => p.symbol === selectedSymbol);
-  }, [pairs, selectedSymbol]);
 
   const requestSort = (key: SortableKeys) => {
     let direction: SortDirection = 'asc';
@@ -243,15 +240,23 @@ const ScannerPage: React.FC = () => {
     <div className="space-y-6">
       <h2 className="text-2xl sm:text-3xl font-bold text-white">Scanner de Marché</h2>
 
-      <div className="bg-[#14181f]/50 border border-[#2b2f38] rounded-lg p-3 sm:p-5 shadow-lg relative">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold text-white">Graphique : {selectedSymbol}</h3>
+      {selectedSymbol && (
+        <div className="bg-[#14181f]/50 border border-[#2b2f38] rounded-lg p-3 sm:p-5 shadow-lg relative">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-semibold text-white">Graphique : {selectedSymbol}</h3>
+            <button
+              onClick={() => setSelectedSymbol(null)}
+              className="text-gray-400 hover:text-white text-2xl leading-none absolute top-3 right-4 z-10"
+              aria-label="Fermer le graphique"
+            >
+              &times;
+            </button>
+          </div>
+          <TradingViewWidget
+            symbol={selectedSymbol}
+          />
         </div>
-        <TradingViewWidget
-          symbol={selectedSymbol}
-          defaultInterval={selectedPairObject?.is_on_hotlist ? '1' : '15'}
-        />
-      </div>
+      )}
 
 
       <div className="bg-[#14181f]/50 border border-[#2b2f38] rounded-lg shadow-lg overflow-hidden">
