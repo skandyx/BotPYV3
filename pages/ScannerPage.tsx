@@ -79,6 +79,7 @@ const ConditionDots: React.FC<{ conditions?: StrategyConditions }> = ({ conditio
         breakout: 'Cassure 1m (Clôture > EMA9)',
         volume: 'Volume 1m (Volume > 1.5x Moyenne)',
         obv: 'Confirmation Volume (OBV 1m haussier)',
+        cvd_5m_trending_up: 'Confirmation Pression Nette (CVD 5m haussier)',
         safety: 'Sécurité 1h (RSI < Seuil)',
         rsi_mtf: 'Sécurité 15m (RSI < Seuil)',
         structure: 'Confirmation Structurelle (Prix > Plus Haut 15m Précédent)',
@@ -92,6 +93,7 @@ const ConditionDots: React.FC<{ conditions?: StrategyConditions }> = ({ conditio
             <Dot active={conditions?.breakout ?? false} tooltip={conditionTooltips.breakout} />
             <Dot active={conditions?.volume ?? false} tooltip={conditionTooltips.volume} />
             <Dot active={conditions?.obv ?? false} tooltip={conditionTooltips.obv} />
+            <Dot active={conditions?.cvd_5m_trending_up ?? false} tooltip={conditionTooltips.cvd_5m_trending_up} />
             <Dot active={conditions?.safety ?? false} tooltip={conditionTooltips.safety} />
             <Dot active={conditions?.rsi_mtf ?? false} tooltip={conditionTooltips.rsi_mtf} />
             <Dot active={conditions?.structure ?? false} tooltip={conditionTooltips.structure} />
@@ -287,7 +289,7 @@ const ScannerPage: React.FC = () => {
                         <th scope="col" className="px-2 sm:px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                             <div className="flex items-center">
                                 <span>Conditions</span>
-                                <Tooltip text="Les 7 conditions de déclenchement (Squeeze, Breakout, Volume, OBV, RSI 1h, RSI 15m, Structure). La tendance 4h est dans sa propre colonne." />
+                                <Tooltip text="Les 8 conditions de déclenchement (Squeeze, Breakout, Volume, OBV, CVD, RSI 1h, RSI 15m, Structure). La tendance 4h est dans sa propre colonne." />
                             </div>
                         </th>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="rsi_1h">RSI 1h</SortableHeader>
@@ -312,7 +314,7 @@ const ScannerPage: React.FC = () => {
                             const triggerConditionsMetCount = pair.conditions?.trend
                                 ? (pair.conditions_met_count ?? 1) - 1
                                 : (pair.conditions_met_count ?? 0);
-                            const totalTriggerConditions = 7;
+                            const totalTriggerConditions = 8;
 
                             return (
                                 <tr 

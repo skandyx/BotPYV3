@@ -1,4 +1,5 @@
 
+
 import express from 'express';
 import bodyParser from 'body-parser';
 import cors from 'cors';
@@ -328,6 +329,7 @@ const loadData = async () => {
             // --- ADVANCED ENTRY CONFIRMATION ---
             USE_MTF_VALIDATION: isNotFalse('USE_MTF_VALIDATION'),
             USE_OBV_VALIDATION: isNotFalse('USE_OBV_VALIDATION'),
+            USE_CVD_FILTER: isTrue('USE_CVD_FILTER'),
             
             // --- NEW ADVANCED CONFIRMATION FILTERS ---
             USE_RSI_MTF_FILTER: isTrue('USE_RSI_MTF_FILTER'),
@@ -435,6 +437,17 @@ const calculateOBV = (klines) => {
         }
     }
     return obv;
+};
+
+// --- Custom CVD Calculator (approximated from klines) ---
+const calculateCVD = (klines) => {
+    if (!klines || klines.length < 1) return [];
+    let cvd = [0]; // Start with a baseline of 0
+    for (let i = 1; i < klines.length; i++) {
+        const volumeDelta = klines[i].close > klines[i].open ? klines[i].volume : (klines[i].close < klines[i].open ? -klines[i].volume : 0);
+        cvd.push(cvd[i - 1] + volumeDelta);
+    }
+    return cvd;
 };
 
 // --- Realtime Analysis Engine (Macro-Micro Strategy) ---
@@ -556,6 +569,7 @@ class RealtimeAnalyzer {
             volume: volumeConditionMet,
             structure: structureConditionMet,
             obv: false, // Default state
+            cvd_5m_trending_up: false, // Default state
         };
         const conditionsMetCount = Object.values(conditions).filter(Boolean).length;
         pairToUpdate.conditions = conditions;
@@ -747,7 +761,24 @@ class RealtimeAnalyzer {
         if (interval === '15m') {
             this.analyze15mIndicators(symbol);
         } else if (interval === '5m') {
+            // 1. Validate pending confirmations for trades
             this.validate5mConfirmation(symbol, kline);
+
+            // 2. Update CVD status for UI on all hotlist pairs
+            const pair = botState.scannerCache.find(p => p.symbol === symbol);
+            if (pair && pair.is_on_hotlist) {
+                const klines5m = this.klineData.get(symbol)?.get('5m');
+                if (klines5m && klines5m.length > 10) {
+                     const cvdValues = calculateCVD(klines5m);
+                     const lastCvd = cvdValues[cvdValues.length - 1];
+                     const cvdSma = SMA.calculate({ period: 5, values: cvdValues }).pop();
+                     const cvdIsTrendingUp = lastCvd > cvdSma;
+                     if (pair.conditions.cvd_5m_trending_up !== cvdIsTrendingUp) {
+                         pair.conditions.cvd_5m_trending_up = cvdIsTrendingUp;
+                         broadcast({ type: 'SCANNER_UPDATE', payload: pair });
+                     }
+                }
+            }
         } else if (interval === '1m') {
             // Get correct settings profile for this specific moment
             let tradeSettings = { ...botState.settings };
@@ -1043,6 +1074,7 @@ const settingProfiles = {
         ADJUST_BREAKEVEN_FOR_FEES: true, TRANSACTION_FEE_PCT: 0.1, USE_ADAPTIVE_TRAILING_STOP: true,
         TRAILING_STOP_TIGHTEN_THRESHOLD_R: 1.5, TRAILING_STOP_TIGHTEN_MULTIPLIER_REDUCTION: 0.5, RISK_REWARD_RATIO: 5.0,
         USE_AGGRESSIVE_ENTRY_LOGIC: false,
+        USE_CVD_FILTER: true,
     },
     'Le Scalpeur': {
         POSITION_SIZE_PCT: 3.0, MAX_OPEN_POSITIONS: 5, REQUIRE_STRONG_BUY: false, USE_RSI_SAFETY_FILTER: true,
@@ -1050,6 +1082,7 @@ const settingProfiles = {
         PARABOLIC_FILTER_THRESHOLD_PCT: 3.5, USE_ATR_STOP_LOSS: false, STOP_LOSS_PCT: 2.0, RISK_REWARD_RATIO: 0.75,
         USE_PARTIAL_TAKE_PROFIT: false, USE_AUTO_BREAKEVEN: false, ADJUST_BREAKEVEN_FOR_FEES: false,
         TRANSACTION_FEE_PCT: 0.1, USE_ADAPTIVE_TRAILING_STOP: false, USE_AGGRESSIVE_ENTRY_LOGIC: false,
+        USE_CVD_FILTER: false,
     },
     'Le Chasseur de Volatilité': {
         POSITION_SIZE_PCT: 4.0, MAX_OPEN_POSITIONS: 8, REQUIRE_STRONG_BUY: false, USE_RSI_SAFETY_FILTER: false,
@@ -1058,6 +1091,7 @@ const settingProfiles = {
         ADJUST_BREAKEVEN_FOR_FEES: true, TRANSACTION_FEE_PCT: 0.1, USE_ADAPTIVE_TRAILING_STOP: true,
         TRAILING_STOP_TIGHTEN_THRESHOLD_R: 1.0, TRAILING_STOP_TIGHTEN_MULTIPLIER_REDUCTION: 0.5,
         USE_AGGRESSIVE_ENTRY_LOGIC: true,
+        USE_CVD_FILTER: false,
     }
 };
 
@@ -1068,6 +1102,14 @@ const tradingEngine = {
         if (botState.circuitBreakerStatus.startsWith('HALTED') || botState.circuitBreakerStatus.startsWith('PAUSED')) {
             log('WARN', `Trade for ${pair.symbol} blocked: Global Circuit Breaker is active (${botState.circuitBreakerStatus}).`);
             return false;
+        }
+        
+        // --- CVD Filter ---
+        if (tradeSettings.USE_CVD_FILTER) {
+            if (pair.conditions?.cvd_5m_trending_up !== true) {
+                log('TRADE', `[CVD FILTER] Rejected ${pair.symbol}. 5m CVD is not trending up.`);
+                return false;
+            }
         }
         
         // --- Liquidity Filter ---

@@ -81,10 +81,11 @@ Pour les paires sur la Hotlist, le bot analyse chaque bougie d'une minute pour t
 *   **Condition 1 : Basculement du Momentum (L'Étincelle - 1m)**
     *   **Outil** : Moyenne Mobile Exponentielle 9 périodes (MME9).
     *   **Règle** : Une bougie de 1 minute doit **clôturer AU-DESSUS** de la MME9.
-*   **Condition 2 : Confirmation par le Volume (Le Carburant - 1m)**
-    *   **Outils** : Volume de trading & On-Balance Volume (OBV).
-    *   **Règle 2a** : Le volume de la bougie de déclenchement doit être **supérieur à 1.5 fois** la moyenne du volume récent.
-    *   **Règle 2b** : L'indicateur **OBV** sur 1 minute doit avoir une pente ascendante, confirmant que la pression acheteuse est réelle et soutenue.
+*   **Condition 2 : Confirmation par le Volume (Le Carburant - 1m & 5m)**
+    *   **Outils** : Volume de trading, On-Balance Volume (OBV), Cumulative Volume Delta (CVD).
+    *   **Règle 2a (Volume 1m)** : Le volume de la bougie de déclenchement doit être **supérieur à 1.5 fois** la moyenne du volume récent.
+    *   **Règle 2b (OBV 1m)** : L'indicateur **OBV** sur 1 minute doit avoir une pente ascendante, confirmant que la pression acheteuse est réelle et soutenue.
+    *   **Règle 2c (CVD 5m)** : L'indicateur **CVD** sur 5 minutes doit avoir une pente ascendante, confirmant que la pression d'achat *nette* (acheteurs - vendeurs) est positive.
 *   **Condition 3 : Validation Multi-Temporelle (La Confirmation - 5m)**
     *   **Règle** : Après le signal 1m, le bot met le trade en **attente**. Il attend la clôture de la bougie de 5 minutes en cours. Le trade n'est exécuté que si cette bougie de 5 minutes clôture également de manière haussière et au-dessus du prix de déclenchement initial. **Ceci est le filtre anti "fake breakout" le plus puissant.**
 *   **Condition 4 : Filtres de Sécurité Avancés (Anti-Piège)**

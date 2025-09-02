@@ -73,6 +73,7 @@ export interface StrategyConditions {
     structure?: boolean;
     obv?: boolean; // 1m OBV
     rsi_mtf?: boolean; // New: 15m RSI safety check
+    cvd_5m_trending_up?: boolean; // New: 5m Cumulative Volume Delta
 }
 
 export interface ScannedPair {
@@ -205,6 +206,7 @@ export interface BotSettings {
     // --- ADVANCED ENTRY CONFIRMATION ---
     USE_MTF_VALIDATION: boolean;
     USE_OBV_VALIDATION: boolean;
+    USE_CVD_FILTER: boolean; // New: Cumulative Volume Delta Filter
 
     // --- NEW ADVANCED CONFIRMATION FILTERS ---
     USE_RSI_MTF_FILTER: boolean; // New: Multi-timeframe RSI check

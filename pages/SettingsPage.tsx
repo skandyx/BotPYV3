@@ -132,6 +132,7 @@ const tooltips: Record<string, string> = {
     CONSECUTIVE_LOSS_LIMIT: "Le nombre maximum de pertes consécutives autorisées. Si cette limite est atteinte, le bot se met en pause pour éviter de trader dans de mauvaises conditions de marché.",
     USE_MTF_VALIDATION: "Validation Multi-Temporelle : Après un signal 1m, attendre la clôture d'une bougie 5m haussière pour confirmer le breakout avant d'entrer. Réduit considérablement les fausses cassures.",
     USE_OBV_VALIDATION: "Confirmation par Volume (OBV) : Exiger que l'indicateur On-Balance Volume (1m) soit en hausse lors du signal de breakout. Confirme que le volume acheteur réel soutient le mouvement.",
+    USE_CVD_FILTER: "Confirmation par Delta de Volume Cumulé (CVD) : Exige que la pression nette acheteuse (CVD) soit en augmentation sur le graphique 5 minutes, confirmant que le breakout est soutenu par un flux d'ordres entrants.",
     SCALING_IN_CONFIG: "Définit la stratégie d'entrées fractionnées. Ex: '50,50' pour 2 entrées de 50% chacune, ou '40,30,30' pour 3 entrées. Laissez vide pour désactiver.",
     MAX_CORRELATED_TRADES: "Le nombre maximum de trades sur des altcoins (corrélés à BTC) autorisés à être ouverts simultanément pour éviter une surexposition.",
     USE_FEAR_AND_GREED_FILTER: "Activer le mode 'Risk-Off' automatique. Le bot se mettra en pause si le sentiment du marché devient extrême (peur ou euphorie), selon l'indice Fear & Greed.",
@@ -504,6 +505,7 @@ const SettingsPage: React.FC = () => {
                         <h3 className="text-lg font-semibold text-white mb-4">Filtres de Confirmation d'Entrée</h3>
                         <div className="space-y-4">
                            <ToggleField id="USE_OBV_VALIDATION" label="Confirmation par Volume (OBV 1m)" />
+                           <ToggleField id="USE_CVD_FILTER" label="Confirmation par Pression Nette (CVD 5m)" />
                            <ToggleField id="USE_MTF_VALIDATION" label="Validation Multi-Temporelle (5m)" />
                            <hr className="border-gray-700"/>
                            <ToggleField id="USE_OBV_5M_VALIDATION" label="Validation OBV Multi-Échelles (5m)" />

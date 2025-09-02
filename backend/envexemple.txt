@@ -36,6 +36,9 @@ LOSS_COOLDOWN_HOURS=4
 USE_MTF_VALIDATION=true
 # Utiliser la confirmation de volume par On-Balance Volume (OBV). (true/false)
 USE_OBV_VALIDATION=true
+# Activer le filtre de confirmation par Cumulative Volume Delta (CVD) sur 5m. (true/false)
+USE_CVD_FILTER=false
+
 
 # --- NEW ADVANCED CONFIRMATION FILTERS ---
 # Utiliser un filtre RSI multi-temporels (15m) pour éviter les entrées tardives. (true/false)

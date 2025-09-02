@@ -52,21 +52,28 @@ L'objectif est d'identifier des paires dans un environnement propice à une expl
     *   **Règle** : La paire doit être dans un **"Bollinger Band Squeeze"**. Ceci est défini lorsque la largeur des bandes sur la bougie de 15m *précédente* est dans le quartile inférieur (25%) de ses valeurs sur les 50 dernières périodes.
 *   **Action** : Si la `Condition 1` ET la `Condition 2` sont vraies, ajouter le symbole à la **Hotlist**. S'abonner dynamiquement à son flux de données 1 minute.
 
-## Phase 2 : Le Déclencheur Micro (Génération du Signal d'Entrée)
+## Phase 2 : Le Déclencheur Micro & Confirmation Multi-couches (Anti-Fakeout)
 
-Pour les paires sur la Hotlist (et seulement pour elles), le bot analyse chaque bougie d'une minute pour trouver le point d'entrée parfait.
+Pour les paires sur la Hotlist, le bot analyse chaque bougie d'une minute pour trouver le point d'entrée. Pour être validé, un signal doit passer une série de filtres de confirmation stricts.
 
-*   **Contexte d'Analyse** : Graphique 1 minute (1m).
-*   **Condition 1 : Basculement du Momentum (L'Étincelle)**
+*   **Contexte d'Analyse** : Graphique 1 minute (1m) et 5 minutes (5m).
+*   **Condition 1 : Basculement du Momentum (L'Étincelle - 1m)**
     *   **Outil** : Moyenne Mobile Exponentielle 9 périodes (MME9).
     *   **Règle** : Une bougie de 1 minute doit **clôturer AU-DESSUS** de la MME9.
-*   **Condition 2 : Confirmation par le Volume (Le Carburant)**
-    *   **Outil** : Volume de trading.
-    *   **Règle** : Le volume de la bougie de déclenchement doit être **supérieur à 1.5 fois** la moyenne du volume des 20 dernières bougies de 1 minute.
-*   **Condition 3 : Filtres de Sécurité (Anti-Surchauffe)**
-    *   **Outils** : RSI (1h), Filtre Parabolique (1m).
-    *   **Règle** : Le RSI ne doit pas être en zone de surachat, et le prix ne doit pas avoir connu une hausse verticale insoutenable juste avant le signal.
-*   **Action** : Si toutes les conditions de la Phase 2 sont remplies, un **signal d'entrée valide** est généré. Le bot passe à la Phase 2.5 avant d'exécuter l'ordre.
+*   **Condition 2 : Confirmation par le Volume (Le Carburant - 1m & 5m)**
+    *   **Outils** : Volume de trading, On-Balance Volume (OBV), Cumulative Volume Delta (CVD).
+    *   **Règle 2a (Volume 1m)** : Le volume de la bougie de déclenchement doit être **supérieur à 1.5 fois** la moyenne du volume récent.
+    *   **Règle 2b (OBV 1m)** : L'indicateur **OBV** sur 1 minute doit avoir une pente ascendante, confirmant que la pression acheteuse est réelle et soutenue.
+    *   **Règle 2c (CVD 5m)** : L'indicateur **CVD** sur 5 minutes doit avoir une pente ascendante, confirmant que la pression d'achat *nette* (acheteurs - vendeurs) est positive.
+*   **Condition 3 : Validation Multi-Temporelle (La Confirmation - 5m)**
+    *   **Règle** : Après le signal 1m, le bot met le trade en **attente**. Il attend la clôture de la bougie de 5 minutes en cours. Le trade n'est exécuté que si cette bougie de 5 minutes clôture également de manière haussière et au-dessus du prix de déclenchement initial. **Ceci est le filtre anti "fake breakout" le plus puissant.**
+*   **Condition 4 : Filtres de Sécurité Avancés (Anti-Piège)**
+    *   **Règle 4a (RSI 1h & 15m)** : Le RSI sur 1 heure ET sur 15 minutes ne doivent pas être en zone de surachat.
+    *   **Règle 4b (Mèches)** : La bougie de déclenchement 1m ne doit pas avoir une mèche supérieure anormalement grande (signe de rejet).
+    *   **Règle 4c (Parabolique)** : Le prix ne doit pas avoir connu une hausse verticale insoutenable juste avant le signal.
+*   **Condition 5 : Confirmation OBV Multi-Échelles (Force Durable - 5m)**
+    *   **Règle** : Après la validation de la bougie de 5m (Condition 3), le bot vérifie que l'OBV sur 5 minutes est également en tendance haussière.
+*   **Action** : Si toutes les conditions sont remplies, un **signal d'entrée de haute qualité** est généré. Le bot passe à la Phase 2.5.
 
 ## Phase 2.5 : Analyse Tactique et Sélection du Profil (Le Cerveau Adaptatif)
 
