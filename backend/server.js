@@ -1,5 +1,6 @@
 
 
+
 import express from 'express';
 import bodyParser from 'body-parser';
 import cors from 'cors';
@@ -504,7 +505,7 @@ class RealtimeAnalyzer {
         const currentBbWidthPct = (lastBB.upper - lastBB.lower) / lastBB.middle * 100;
         pairToUpdate.bollinger_bands_15m = { ...lastBB, width_pct: currentBbWidthPct };
 
-        // --- DUAL-CONFIRMATION SQUEEZE LOGIC ---
+        // --- Bollinger Band Squeeze Logic (as per spec) ---
         const bbWidths = bbResult.map(b => (b.upper - b.lower) / b.middle);
         const previousCandleIndex = bbWidths.length - 2;
         const previousBbWidth = bbWidths[previousCandleIndex];
@@ -518,10 +519,7 @@ class RealtimeAnalyzer {
             wasInBbSqueeze = previousBbWidth <= squeezeThreshold;
         }
 
-        const recentAtr = atrResult.slice(-5);
-        const isAtrFalling = recentAtr.length === 5 && recentAtr[4] < recentAtr[0];
-
-        const wasInSqueeze = wasInBbSqueeze && isAtrFalling;
+        const wasInSqueeze = wasInBbSqueeze;
         pairToUpdate.is_in_squeeze_15m = wasInSqueeze;
         
         const volumes15m = klines15m.map(k => k.volume);
@@ -530,8 +528,8 @@ class RealtimeAnalyzer {
 
         const volumeConditionMet = lastCandle.volume > (avgVolume * 2);
 
-        // --- "Hotlist" Logic ---
-        const isTrendOK = pairToUpdate.price_above_ema50_4h === true && (pairToUpdate.trend_score || 0) > 50;
+        // --- "Hotlist" Logic (as per spec) ---
+        const isTrendOK = pairToUpdate.price_above_ema50_4h === true;
         const isOnHotlist = isTrendOK && wasInSqueeze;
         pairToUpdate.is_on_hotlist = isOnHotlist;
 
