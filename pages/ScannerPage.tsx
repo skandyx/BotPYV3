@@ -1,7 +1,4 @@
 
-
-
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { ScannedPair, StrategyConditions } from '../types';
 import Spinner from '../components/common/Spinner';
@@ -311,7 +308,7 @@ const ScannerPage: React.FC = () => {
                             const rowClass = pair.score === 'PENDING_CONFIRMATION' ? 'bg-sky-900/40' : '';
                             const trendClass = getTrendColorClass(pair.price_above_ema50_4h);
 
-                            const { met, total } = useMemo(() => {
+                            const { met, total } = (() => {
                                 if (!settings || !pair.conditions) return { met: pair.conditions_met_count || 0, total: 8 };
 
                                 const conditionMap: Record<keyof StrategyConditions, string | null> = {
@@ -331,10 +328,11 @@ const ScannerPage: React.FC = () => {
 
                                 for (const key in conditionMap) {
                                     const conditionKey = key as keyof StrategyConditions;
-                                    const settingKey = conditionMap[conditionKey];
 
                                     // Skip the 'trend' condition as it's not part of this score
                                     if (conditionKey === 'trend') continue;
+
+                                    const settingKey = conditionMap[conditionKey];
 
                                     const isConditionActive = settingKey === null || settings[settingKey as keyof typeof settings] === true;
 
@@ -346,7 +344,7 @@ const ScannerPage: React.FC = () => {
                                     }
                                 }
                                 return { met: metConditions, total: totalConditions };
-                            }, [pair.conditions, settings]);
+                            })();
 
 
                             return (
