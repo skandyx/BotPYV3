@@ -1,6 +1,7 @@
 
 
 
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { ScannedPair, StrategyConditions } from '../types';
 import Spinner from '../components/common/Spinner';
@@ -310,11 +311,43 @@ const ScannerPage: React.FC = () => {
                             const rowClass = pair.score === 'PENDING_CONFIRMATION' ? 'bg-sky-900/40' : '';
                             const trendClass = getTrendColorClass(pair.price_above_ema50_4h);
 
-                            // Corrected calculation for trigger conditions count
-                            const triggerConditionsMetCount = pair.conditions?.trend
-                                ? (pair.conditions_met_count ?? 1) - 1
-                                : (pair.conditions_met_count ?? 0);
-                            const totalTriggerConditions = 8;
+                            const { met, total } = useMemo(() => {
+                                if (!settings || !pair.conditions) return { met: pair.conditions_met_count || 0, total: 8 };
+
+                                const conditionMap: Record<keyof StrategyConditions, string | null> = {
+                                    squeeze: null, // Always active
+                                    breakout: null, // Always active
+                                    volume: null, // Always active
+                                    obv: 'USE_OBV_VALIDATION',
+                                    cvd_5m_trending_up: 'USE_CVD_FILTER',
+                                    safety: 'USE_RSI_SAFETY_FILTER',
+                                    rsi_mtf: 'USE_RSI_MTF_FILTER',
+                                    structure: 'USE_MTF_VALIDATION',
+                                    trend: null, // This is handled separately in its own column
+                                };
+                                
+                                let totalConditions = 0;
+                                let metConditions = 0;
+
+                                for (const key in conditionMap) {
+                                    const conditionKey = key as keyof StrategyConditions;
+                                    const settingKey = conditionMap[conditionKey];
+
+                                    // Skip the 'trend' condition as it's not part of this score
+                                    if (conditionKey === 'trend') continue;
+
+                                    const isConditionActive = settingKey === null || settings[settingKey as keyof typeof settings] === true;
+
+                                    if (isConditionActive) {
+                                        totalConditions++;
+                                        if (pair.conditions[conditionKey]) {
+                                            metConditions++;
+                                        }
+                                    }
+                                }
+                                return { met: metConditions, total: totalConditions };
+                            }, [pair.conditions, settings]);
+
 
                             return (
                                 <tr 
@@ -334,7 +367,7 @@ const ScannerPage: React.FC = () => {
                                     </td>
                                     <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm">
                                         <span className={`px-2.5 py-1 text-xs font-semibold rounded-full min-w-[140px] text-center ${scoreDisplay.className}`}>
-                                            {scoreDisplay.text} ({triggerConditionsMetCount}/{totalTriggerConditions})
+                                            {scoreDisplay.text} ({met}/{total})
                                         </span>
                                     </td>
                                     <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-bold ${getTrendScoreColorClass(pair.trend_score)}`}>
