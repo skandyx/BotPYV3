@@ -1,9 +1,6 @@
 
 
 
-
-
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { ScannedPair, StrategyConditions } from '../types';
 import Spinner from '../components/common/Spinner';
@@ -82,21 +79,19 @@ const ConditionDots: React.FC<{ conditions?: StrategyConditions }> = ({ conditio
         breakout: 'Cassure 1m (Clôture > EMA9)',
         volume: 'Volume 1m (Volume > 1.5x Moyenne)',
         obv: 'Confirmation Volume (OBV 1m haussier)',
-        cvd: 'Confirmation d\'Agressivité (CVD 1m haussier)',
         safety: 'Sécurité 1h (RSI < Seuil)',
         rsi_mtf: 'Sécurité 15m (RSI < Seuil)',
         structure: 'Confirmation Structurelle (Prix > Plus Haut 15m Précédent)',
     };
 
     // The order of these dots is specifically set to match the logical flow of the trading strategy:
-    // 1. Preparation (Squeeze) -> 2. Trigger (Breakout, Volume, OBV, CVD) -> 3. Safety Checks (RSIs, Structure)
+    // 1. Preparation (Squeeze) -> 2. Trigger (Breakout, Volume, OBV) -> 3. Safety Checks (RSIs, Structure)
     return (
         <div className="flex items-center space-x-2">
             <Dot active={conditions?.squeeze ?? false} tooltip={conditionTooltips.squeeze} />
             <Dot active={conditions?.breakout ?? false} tooltip={conditionTooltips.breakout} />
             <Dot active={conditions?.volume ?? false} tooltip={conditionTooltips.volume} />
             <Dot active={conditions?.obv ?? false} tooltip={conditionTooltips.obv} />
-            <Dot active={conditions?.cvd ?? false} tooltip={conditionTooltips.cvd} />
             <Dot active={conditions?.safety ?? false} tooltip={conditionTooltips.safety} />
             <Dot active={conditions?.rsi_mtf ?? false} tooltip={conditionTooltips.rsi_mtf} />
             <Dot active={conditions?.structure ?? false} tooltip={conditionTooltips.structure} />
@@ -292,7 +287,7 @@ const ScannerPage: React.FC = () => {
                         <th scope="col" className="px-2 sm:px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                             <div className="flex items-center">
                                 <span>Conditions</span>
-                                <Tooltip text="Les 8 conditions de déclenchement (Squeeze, Breakout, Volume, OBV, CVD, RSI 1h, RSI 15m, Structure). La tendance 4h est dans sa propre colonne." />
+                                <Tooltip text="Les 7 conditions de déclenchement (Squeeze, Breakout, Volume, OBV, RSI 1h, RSI 15m, Structure). La tendance 4h est dans sa propre colonne." />
                             </div>
                         </th>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="rsi_1h">RSI 1h</SortableHeader>
@@ -313,10 +308,11 @@ const ScannerPage: React.FC = () => {
                             const rowClass = pair.score === 'PENDING_CONFIRMATION' ? 'bg-sky-900/40' : '';
                             const trendClass = getTrendColorClass(pair.price_above_ema50_4h);
 
-                            const triggerConditionsMetCount = Object.entries(pair.conditions ?? {})
-                                .filter(([key, value]) => key !== 'trend' && value === true)
-                                .length;
-                            const totalTriggerConditions = 8;
+                            // Corrected calculation for trigger conditions count
+                            const triggerConditionsMetCount = pair.conditions?.trend
+                                ? (pair.conditions_met_count ?? 1) - 1
+                                : (pair.conditions_met_count ?? 0);
+                            const totalTriggerConditions = 7;
 
                             return (
                                 <tr 

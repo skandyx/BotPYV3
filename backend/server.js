@@ -1,3 +1,4 @@
+
 import express from 'express';
 import bodyParser from 'body-parser';
 import cors from 'cors';
@@ -72,7 +73,7 @@ wss.on('connection', (ws) => {
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
-            // log('WEBSOCKET', `Received message from client: ${JSON.stringify(data)}`);
+            log('WEBSOCKET', `Received message from client: ${JSON.stringify(data)}`);
             
             if (data.type === 'GET_FULL_SCANNER_LIST') {
                 log('WEBSOCKET', 'Client requested full scanner list. Sending...');
@@ -96,8 +97,8 @@ wss.on('connection', (ws) => {
 });
 function broadcast(message) {
     const data = JSON.stringify(message);
-    if (!['PRICE_UPDATE'].includes(message.type)) {
-         log('WEBSOCKET', `Broadcasting ${message.type} to ${clients.size} clients.`);
+    if (['SCANNER_UPDATE', 'POSITIONS_UPDATED'].includes(message.type)) {
+        log('WEBSOCKET', `Broadcasting ${message.type} to ${clients.size} clients.`);
     }
     for (const client of clients) {
         if (client.readyState === WebSocket.OPEN) {
@@ -112,7 +113,7 @@ function broadcast(message) {
 
 // --- Logging Service ---
 const log = (level, message) => {
-    console.log(`[${new Date().toISOString()}] [${level}] ${message}`);
+    console.log(`[${level}] ${message}`);
     const logEntry = {
         type: 'LOG_ENTRY',
         payload: {
@@ -168,13 +169,6 @@ class BinanceApiClient {
         const params = { symbol, side, type, quantity };
         return this._request('POST', '/api/v3/order', params);
     }
-
-    async getOrderBookDepth(symbol, limit = 5) {
-        const queryString = new URLSearchParams({ symbol, limit }).toString();
-        const url = `${this.baseUrl}/api/v3/depth?${queryString}`;
-        const response = await fetch(url);
-        return response.json();
-    }
     
     async getExchangeInfo() {
         try {
@@ -190,7 +184,6 @@ class BinanceApiClient {
 }
 let binanceApiClient = null;
 let symbolRules = new Map();
-let cryptoSectors = new Map();
 
 function formatQuantity(symbol, quantity) {
     const rules = symbolRules.get(symbol);
@@ -204,7 +197,7 @@ function formatQuantity(symbol, quantity) {
     }
 
     // Calculate precision from stepSize (e.g., 0.001 -> 3)
-    const precision = Math.max(0, -Math.log10(rules.stepSize));
+    const precision = Math.max(0, Math.log10(1 / rules.stepSize));
     const factor = Math.pow(10, precision);
     return Math.floor(quantity * factor) / factor;
 }
@@ -342,7 +335,6 @@ const loadData = async () => {
             USE_WICK_DETECTION_FILTER: isTrue('USE_WICK_DETECTION_FILTER'),
             MAX_UPPER_WICK_PCT: parseFloat(process.env.MAX_UPPER_WICK_PCT) || 50,
             USE_OBV_5M_VALIDATION: isTrue('USE_OBV_5M_VALIDATION'),
-            USE_CVD_FILTER: isTrue('USE_CVD_FILTER'),
             
             // --- PORTFOLIO INTELLIGENCE ---
             SCALING_IN_CONFIG: process.env.SCALING_IN_CONFIG || "50,50",
@@ -445,28 +437,6 @@ const calculateOBV = (klines) => {
     return obv;
 };
 
-// --- Custom CVD Calculator (Approximation from Klines) ---
-const calculateCVD = (klines) => {
-    if (!klines || klines.length < 1) return [];
-    let cumulativeDelta = 0;
-    const cvd = [];
-    for (const kline of klines) {
-        const high = kline.high;
-        const low = kline.low;
-        const close = kline.close;
-        const volume = kline.volume;
-        let delta = 0;
-        if (high !== low) {
-            // A simple approximation of buying pressure based on where the close is within the candle range.
-            const buyingPressure = ((close - low) / (high - low)) * 2 - 1; // Ranges from -1 (close at low) to +1 (close at high)
-            delta = volume * buyingPressure;
-        }
-        cumulativeDelta += delta;
-        cvd.push(cumulativeDelta);
-    }
-    return cvd;
-};
-
 // --- Realtime Analysis Engine (Macro-Micro Strategy) ---
 class RealtimeAnalyzer {
     constructor(log) {
@@ -540,646 +510,1453 @@ class RealtimeAnalyzer {
 
         const wasInSqueeze = wasInBbSqueeze && isAtrFalling;
         pairToUpdate.is_in_squeeze_15m = wasInSqueeze;
-
-        // --- SCORING & HOTLIST LOGIC ---
-        const isOnHotlist = pairToUpdate.price_above_ema50_4h && wasInSqueeze;
-        pairToUpdate.is_on_hotlist = isOnHotlist;
         
-        if (pairToUpdate.score === 'PENDING_CONFIRMATION' || pairToUpdate.score === 'FAKE_BREAKOUT') {
-           // Don't overwrite these important transient states
-        } else if (isOnHotlist) {
-            pairToUpdate.score = 'COMPRESSION';
-            pairToUpdate.score_value = 85;
-        } else {
-            pairToUpdate.score = 'HOLD';
-            pairToUpdate.score_value = 50;
+        const volumes15m = klines15m.map(k => k.volume);
+        const avgVolume = volumes15m.slice(-21, -1).reduce((sum, v) => sum + v, 0) / 20;
+        pairToUpdate.volume_20_period_avg_15m = avgVolume;
+
+        const volumeConditionMet = lastCandle.volume > (avgVolume * 2);
+
+        // --- "Hotlist" Logic ---
+        const isTrendOK = pairToUpdate.price_above_ema50_4h === true && (pairToUpdate.trend_score || 0) > 50;
+        const isOnHotlist = isTrendOK && wasInSqueeze;
+        pairToUpdate.is_on_hotlist = isOnHotlist;
+
+        if (isOnHotlist && !old_hotlist_status) {
+            this.log('SCANNER', `[HOTLIST ADDED] ${symbol} now meets macro conditions (Trend OK, Squeeze Confirmed). Watching on 1m/5m.`);
+            addSymbolToMicroStreams(symbol);
+        } else if (!isOnHotlist && old_hotlist_status) {
+            this.log('SCANNER', `[HOTLIST REMOVED] ${symbol} no longer meets macro conditions.`);
+            removeSymbolFromMicroStreams(symbol);
         }
 
-        // Broadcast if score or hotlist status changed
+        let finalScore = 'HOLD';
+        if (isOnHotlist) finalScore = 'COMPRESSION';
+
+        const isBreakout = lastCandle.close > lastBB.upper;
+        if (isBreakout && !wasInSqueeze) {
+            finalScore = 'FAKE_BREAKOUT';
+        }
+
+        const cooldownInfo = botState.recentlyLostSymbols.get(symbol);
+        if (cooldownInfo && Date.now() < cooldownInfo.until) {
+            finalScore = 'COOLDOWN';
+        }
+        
+        const previous15mCandle = klines15m[klines15m.length - 2];
+        const highOfPrevious15m = previous15mCandle.high;
+        const structureConditionMet = pairToUpdate.price > highOfPrevious15m;
+        
+        const conditions = {
+            trend: isTrendOK,
+            squeeze: wasInSqueeze,
+            safety: pairToUpdate.rsi_1h !== undefined && pairToUpdate.rsi_1h < this.settings.RSI_OVERBOUGHT_THRESHOLD,
+            rsi_mtf: pairToUpdate.rsi_15m !== undefined && pairToUpdate.rsi_15m < this.settings.RSI_15M_OVERBOUGHT_THRESHOLD,
+            breakout: isBreakout,
+            volume: volumeConditionMet,
+            structure: structureConditionMet,
+            obv: false, // Default state
+        };
+        const conditionsMetCount = Object.values(conditions).filter(Boolean).length;
+        pairToUpdate.conditions = conditions;
+        pairToUpdate.conditions_met_count = conditionsMetCount;
+        pairToUpdate.score_value = (conditionsMetCount / 8) * 100;
+        pairToUpdate.score = finalScore;
+
         if (pairToUpdate.score !== old_score || pairToUpdate.is_on_hotlist !== old_hotlist_status) {
             broadcast({ type: 'SCANNER_UPDATE', payload: pairToUpdate });
         }
     }
     
-    getHourlyVolume(symbol) {
-        const klines15m = this.klineData.get(symbol)?.get('15m');
-        if (!klines15m || klines15m.length < 4) return 0;
-        return klines15m.slice(-4).reduce((sum, k) => sum + k.volume, 0);
-    }
-
-    // Phase 2: Micro analysis on 1m chart for trigger
-    analyze1mTrigger(symbol, klines1m) {
+    // Phase 2: 1m analysis to find the precision entry for pairs on the Hotlist
+    async checkFor1mTrigger(symbol, tradeSettings) {
         const pair = botState.scannerCache.find(p => p.symbol === symbol);
-        if (!pair || !pair.is_on_hotlist || pair.score === 'PENDING_CONFIRMATION') return;
+        if (!pair || !pair.is_on_hotlist || botState.pendingConfirmation.has(symbol)) return;
+
+        const klines1m = this.klineData.get(symbol)?.get('1m');
+        if (!klines1m || klines1m.length < 61) return;
+
+        const closes1m = klines1m.map(k => k.close);
+        const volumes1m = klines1m.map(k => k.volume);
+        const lastEma9 = EMA.calculate({ period: 9, values: closes1m }).pop();
+        const avgVolume = volumes1m.slice(-21, -1).reduce((sum, v) => sum + v, 0) / 20;
+
+        if (lastEma9 === undefined) return;
         
-        const settings = this.settings;
-        if (klines1m.length < 21) return;
-
-        const lastKline = klines1m[klines1m.length - 1];
-        const prevKline = klines1m[klines1m.length - 2];
-        const closes = klines1m.map(k => k.close);
-        const volumes = klines1m.map(k => k.volume);
-
-        // Conditions
-        const conditions = { trend: pair.price_above_ema50_4h };
-
-        // 1. Breakout (Close > EMA9)
-        const ema9 = EMA.calculate({ period: 9, values: closes }).pop();
-        conditions.breakout = lastKline.close > ema9;
-
-        // 2. Volume Spike
-        const avgVolume = SMA.calculate({ period: 20, values: volumes.slice(0, -1) }).pop() || 0;
-        conditions.volume = lastKline.volume > avgVolume * 1.5;
-
-        // 3. OBV Confirmation
-        const obv = calculateOBV(klines1m);
-        conditions.obv = settings.USE_OBV_VALIDATION ? obv[obv.length - 1] > obv[obv.length - 2] : true;
+        const triggerCandle = klines1m[klines1m.length - 1];
         
-        // 4. CVD Confirmation
-        const cvd = calculateCVD(klines1m);
-        conditions.cvd = settings.USE_CVD_FILTER ? cvd[cvd.length - 1] > cvd[cvd.length - 2] : true;
-
-        // 5. RSI Safety Checks
-        conditions.safety = settings.USE_RSI_SAFETY_FILTER ? pair.rsi_1h < settings.RSI_OVERBOUGHT_THRESHOLD : true;
-        conditions.rsi_mtf = settings.USE_RSI_MTF_FILTER ? pair.rsi_15m < settings.RSI_15M_OVERBOUGHT_THRESHOLD : true;
-        
-        // 6. Structure Confirmation (Price > previous 15m high)
-        const klines15m = this.klineData.get(symbol)?.get('15m');
-        if (klines15m && klines15m.length > 1) {
-            const prev15mHigh = klines15m[klines15m.length - 2].high;
-            conditions.structure = lastKline.close > prev15mHigh;
-        } else {
-            conditions.structure = false;
+        // --- ADVANCED ANTI-FAKE OUT FILTERS ---
+        if (tradeSettings.USE_RSI_MTF_FILTER) {
+            if (pair.rsi_15m === undefined || pair.rsi_15m >= tradeSettings.RSI_15M_OVERBOUGHT_THRESHOLD) {
+                log('TRADE', `[RSI MTF FILTER] Rejected ${symbol}. 15m RSI (${pair.rsi_15m?.toFixed(1)}) is over threshold (${tradeSettings.RSI_15M_OVERBOUGHT_THRESHOLD}).`);
+                return;
+            }
         }
 
-        // --- Advanced Safety Filters ---
-        // 7. Wick Detection
-        const wickFilterPassed = !settings.USE_WICK_DETECTION_FILTER || (() => {
-            const candleRange = lastKline.high - lastKline.low;
-            if (candleRange === 0) return true; // Doji candle, no wick to measure
-            const upperWick = lastKline.high - lastKline.close;
-            return (upperWick / candleRange) * 100 < settings.MAX_UPPER_WICK_PCT;
-        })();
-
-        // 8. Parabolic Filter
-        const parabolicFilterPassed = !settings.USE_PARABOLIC_FILTER || (() => {
-            const period = settings.PARABOLIC_FILTER_PERIOD_MINUTES;
-            if (klines1m.length < period) return true;
-            const startPrice = klines1m[klines1m.length - period].open;
-            const priceChangePct = ((lastKline.close - startPrice) / startPrice) * 100;
-            return priceChangePct < settings.PARABOLIC_FILTER_THRESHOLD_PCT;
-        })();
+        if (tradeSettings.USE_WICK_DETECTION_FILTER) {
+            const candleHeight = triggerCandle.high - triggerCandle.low;
+            if (candleHeight > 0) {
+                const upperWick = triggerCandle.high - triggerCandle.close;
+                const wickPercentage = (upperWick / candleHeight) * 100;
+                if (wickPercentage > tradeSettings.MAX_UPPER_WICK_PCT) {
+                    log('TRADE', `[WICK FILTER] Rejected ${symbol}. Upper wick (${wickPercentage.toFixed(1)}%) exceeds threshold (${tradeSettings.MAX_UPPER_WICK_PCT}%).`);
+                    return;
+                }
+            }
+        }
         
-        // 9. Whale Manipulation Filter
-        const hourlyVolume = this.getHourlyVolume(symbol);
-        const whaleFilterPassed = !settings.USE_WHALE_MANIPULATION_FILTER || (hourlyVolume > 0 && (lastKline.volume / hourlyVolume) * 100 < settings.WHALE_SPIKE_THRESHOLD_PCT);
+        if (tradeSettings.USE_WHALE_MANIPULATION_FILTER) {
+            const last60mVolumes = volumes1m.slice(-61, -1);
+            const hourlyAvgVolume = last60mVolumes.reduce((sum, v) => sum + v, 0) / 60;
+            const thresholdVolume = hourlyAvgVolume * (tradeSettings.WHALE_SPIKE_THRESHOLD_PCT / 100);
+            if (triggerCandle.volume > thresholdVolume) {
+                log('TRADE', `[WHALE FILTER] Rejected ${symbol}. 1m volume (${triggerCandle.volume.toFixed(0)}) exceeded threshold (${thresholdVolume.toFixed(0)}).`);
+                return;
+            }
+        }
 
+        // --- CORE TRIGGER CONDITIONS ---
+        const momentumCondition = triggerCandle.close > lastEma9;
+        const volumeSpikeCondition = triggerCandle.volume > avgVolume * 1.5;
 
-        pair.conditions = conditions;
-        pair.conditions_met_count = Object.values(conditions).filter(Boolean).length;
+        let obvCondition = true;
+        if (tradeSettings.USE_OBV_VALIDATION) {
+            const obvValues = calculateOBV(klines1m);
+            if (obvValues.length > 5) {
+                const lastObv = obvValues[obvValues.length - 1];
+                const obvSma = SMA.calculate({ period: 5, values: obvValues }).pop();
+                obvCondition = lastObv > obvSma;
+            } else {
+                obvCondition = false;
+            }
+        }
+        
+        pair.conditions.obv = obvCondition;
 
-        const allBaseConditionsMet = Object.values(conditions).every(Boolean);
-
-        if (allBaseConditionsMet && wickFilterPassed && parabolicFilterPassed && whaleFilterPassed) {
-            this.log('SCANNER', `[${symbol}] High-quality 1m trigger DETECTED. Awaiting 5m confirmation.`);
-            pair.score = 'PENDING_CONFIRMATION';
-            pair.score_value = 95;
-            pair.trigger_price = lastKline.close; // Store for 5m validation
+        if (momentumCondition && volumeSpikeCondition && obvCondition) {
+            this.log('TRADE', `[1m TRIGGER] Signal for ${symbol}. Momentum, Volume, OBV all OK.`);
+            
+            if (tradeSettings.USE_MTF_VALIDATION) {
+                pair.score = 'PENDING_CONFIRMATION';
+                botState.pendingConfirmation.set(symbol, {
+                    triggerPrice: triggerCandle.close,
+                    triggerTimestamp: Date.now(),
+                    slPriceReference: triggerCandle.low,
+                    settings: tradeSettings,
+                });
+                this.log('TRADE', `[MTF] ${symbol} is now pending 5m confirmation. Trigger price: $${triggerCandle.close}`);
+            } else {
+                const tradeOpened = await tradingEngine.evaluateAndOpenTrade(pair, triggerCandle.low, tradeSettings);
+                if (tradeOpened) {
+                    pair.is_on_hotlist = false;
+                    removeSymbolFromMicroStreams(symbol);
+                }
+            }
             broadcast({ type: 'SCANNER_UPDATE', payload: pair });
         }
     }
-    
-    // Phase 2.5: Confirm entry with 5m kline data
-    confirm5mEntry(symbol, klines5m) {
+
+    async validate5mConfirmation(symbol, new5mCandle) {
+        const pendingSignal = botState.pendingConfirmation.get(symbol);
+        if (!pendingSignal) return;
+        
         const pair = botState.scannerCache.find(p => p.symbol === symbol);
-        if (!pair || pair.score !== 'PENDING_CONFIRMATION') return;
+        if (!pair) return;
 
-        const last5mKline = klines5m[klines5m.length - 1];
-
-        // 1. 5m candle must be bullish
-        const isBullishClose = last5mKline.close > last5mKline.open;
+        const { triggerPrice, slPriceReference, settings } = pendingSignal;
         
-        // 2. 5m close must be above the initial 1m trigger price
-        const isAboveTrigger = last5mKline.close > pair.trigger_price;
-        
-        // 3. OBV on 5m must confirm strength
-        const obv5m = calculateOBV(klines5m);
-        const isObvConfirming = !this.settings.USE_OBV_5M_VALIDATION || (obv5m.length > 1 && obv5m[obv5m.length - 1] > obv5m[obv5m.length - 2]);
-        
-        if (isBullishClose && isAboveTrigger && isObvConfirming) {
-            this.log('TRADE', `[${symbol}] 5m confirmation successful! Preparing to open trade.`);
-            pair.score = 'STRONG BUY';
-            pair.score_value = 100;
-            // The actual trade opening is handled by a separate service/function
-            openTrade(pair);
-        } else {
-            this.log('SCANNER', `[${symbol}] 5m confirmation FAILED. Invalidating signal. (Bullish: ${isBullishClose}, AboveTrigger: ${isAboveTrigger}, OBV: ${isObvConfirming})`);
-            pair.score = 'FAKE_BREAKOUT';
-            pair.score_value = 20;
-            // Reset trigger price
-            delete pair.trigger_price;
+        let obv5mCondition = true;
+        if (settings.USE_OBV_5M_VALIDATION) {
+            const klines5m = this.klineData.get(symbol)?.get('5m');
+            if (klines5m && klines5m.length > 5) {
+                const obvValues = calculateOBV(klines5m);
+                if (obvValues.length > 5) {
+                    const lastObv = obvValues[obvValues.length - 1];
+                    const obvSma = SMA.calculate({ period: 5, values: obvValues.slice(0, -1) }).pop();
+                    obv5mCondition = lastObv > obvSma;
+                } else {
+                    obv5mCondition = false;
+                }
+            } else {
+                obv5mCondition = false;
+            }
         }
+
+        const candleIsValid = new5mCandle.close > triggerPrice && new5mCandle.close > new5mCandle.open;
+        const isValid = candleIsValid && obv5mCondition;
+        
+        if (isValid) {
+            this.log('TRADE', `[MTF] SUCCESS: 5m candle for ${symbol} confirmed breakout. Proceeding to trade.`);
+            const tradeOpened = await tradingEngine.evaluateAndOpenTrade(pair, slPriceReference, settings);
+            if (tradeOpened) {
+                pair.is_on_hotlist = false;
+                removeSymbolFromMicroStreams(symbol);
+            }
+        } else {
+            const reason = !candleIsValid ? "5m candle did not confirm" : "5m OBV did not confirm";
+            this.log('TRADE', `[MTF] FAILED: ${reason} for ${symbol}. Invalidating signal.`);
+            pair.score = 'FAKE_BREAKOUT';
+        }
+        
+        botState.pendingConfirmation.delete(symbol);
         broadcast({ type: 'SCANNER_UPDATE', payload: pair });
+    }
+
+
+    async hydrateSymbol(symbol, interval = '15m') {
+        const klineLimit = interval === '1m' ? 100 : (interval === '5m' ? 50 : 201);
+        if (this.hydrating.has(`${symbol}-${interval}`)) return;
+        this.hydrating.add(`${symbol}-${interval}`);
+        this.log('INFO', `[Analyzer] Hydrating ${interval} klines for: ${symbol}`);
+        try {
+            const klines = await scanner.fetchKlinesFromBinance(symbol, interval, 0, klineLimit);
+            if (klines.length === 0) throw new Error(`No ${interval} klines fetched.`);
+            const formattedKlines = klines.map(k => ({
+                openTime: k[0], open: parseFloat(k[1]), high: parseFloat(k[2]),
+                low: parseFloat(k[3]), close: parseFloat(k[4]), volume: parseFloat(k[5]),
+                closeTime: k[6],
+            }));
+
+            if (!this.klineData.has(symbol)) this.klineData.set(symbol, new Map());
+            this.klineData.get(symbol).set(interval, formattedKlines);
+            
+            if (interval === '15m') this.analyze15mIndicators(symbol);
+
+        } catch (error) {
+            this.log('ERROR', `Failed to hydrate ${symbol} (${interval}): ${error.message}`);
+        } finally {
+            this.hydrating.delete(`${symbol}-${interval}`);
+        }
+    }
+
+    handleNewKline(symbol, interval, kline) {
+        if(symbol === 'BTCUSDT' && interval === '1m' && kline.closeTime) {
+            checkGlobalSafetyRules();
+        }
+
+        log('BINANCE_WS', `[${interval} KLINE] Received for ${symbol}. Close: ${kline.close}`);
+        if (!this.klineData.has(symbol) || !this.klineData.get(symbol).has(interval)) {
+            this.hydrateSymbol(symbol, interval);
+            return;
+        }
+
+        const klines = this.klineData.get(symbol).get(interval);
+        klines.push(kline);
+        if (klines.length > 201) klines.shift();
+        
+        if (interval === '15m') {
+            this.analyze15mIndicators(symbol);
+        } else if (interval === '5m') {
+            this.validate5mConfirmation(symbol, kline);
+        } else if (interval === '1m') {
+            // Get correct settings profile for this specific moment
+            let tradeSettings = { ...botState.settings };
+            if (botState.settings.USE_DYNAMIC_PROFILE_SELECTOR) {
+                const pair = botState.scannerCache.find(p => p.symbol === symbol);
+                if(pair) {
+                    if (pair.adx_15m !== undefined && pair.adx_15m < tradeSettings.ADX_THRESHOLD_RANGE) {
+                        tradeSettings = { ...tradeSettings, ...settingProfiles['Le Scalpeur'] };
+                    } else if (pair.atr_pct_15m !== undefined && pair.atr_pct_15m > tradeSettings.ATR_PCT_THRESHOLD_VOLATILE) {
+                        tradeSettings = { ...tradeSettings, ...settingProfiles['Le Chasseur de Volatilité'] };
+                    } else {
+                        tradeSettings = { ...tradeSettings, ...settingProfiles['Le Sniper'] };
+                    }
+                }
+            }
+
+            // Check 1: Look for new trade triggers
+            this.checkFor1mTrigger(symbol, tradeSettings);
+
+            // Check 2: Look for scaling-in confirmations on existing trades
+            if (tradeSettings.SCALING_IN_CONFIG && tradeSettings.SCALING_IN_CONFIG.trim() !== '') {
+                const position = botState.activePositions.find(p => p.symbol === symbol && p.is_scaling_in);
+                if (position && kline.close > kline.open) { // Bullish confirmation candle
+                    tradingEngine.scaleInPosition(position, kline.close, tradeSettings);
+                }
+            }
+        }
+    }
+}
+const realtimeAnalyzer = new RealtimeAnalyzer(log);
+
+
+// --- Binance WebSocket for Real-time Kline Data ---
+let binanceWs = null;
+const BINANCE_WS_URL = 'wss://stream.binance.com:9443/ws';
+const subscribedStreams = new Set();
+let reconnectBinanceWsTimeout = null;
+
+function connectToBinanceStreams() {
+    if (binanceWs && (binanceWs.readyState === WebSocket.OPEN || binanceWs.readyState === WebSocket.CONNECTING)) {
+        return;
+    }
+    if (reconnectBinanceWsTimeout) clearTimeout(reconnectBinanceWsTimeout);
+
+    log('BINANCE_WS', 'Connecting to Binance streams...');
+    binanceWs = new WebSocket(BINANCE_WS_URL);
+
+    binanceWs.on('open', () => {
+        log('BINANCE_WS', 'Connected. Subscribing to streams...');
+        if (subscribedStreams.size > 0) {
+            const streams = Array.from(subscribedStreams);
+            const payload = { method: "SUBSCRIBE", params: streams, id: 1 };
+            binanceWs.send(JSON.stringify(payload));
+            log('BINANCE_WS', `Resubscribed to ${streams.length} streams.`);
+        }
+    });
+
+    binanceWs.on('message', (data) => {
+        try {
+            const msg = JSON.parse(data);
+            if (msg.e === 'kline') {
+                const { s: symbol, k: kline } = msg;
+                if (kline.x) { // is closed kline
+                     const formattedKline = {
+                        openTime: kline.t, open: parseFloat(kline.o), high: parseFloat(kline.h),
+                        low: parseFloat(kline.l), close: parseFloat(kline.c), volume: parseFloat(kline.v),
+                        closeTime: kline.T,
+                    };
+                    realtimeAnalyzer.handleNewKline(symbol, kline.i, formattedKline);
+                }
+            } else if (msg.e === '24hrTicker') {
+                const symbol = msg.s;
+                const newPrice = parseFloat(msg.c);
+                const newVolume = parseFloat(msg.q); // Total traded quote asset volume for last 24h
+
+                // 1. Update the central price cache for PnL calculations etc.
+                botState.priceCache.set(symbol, { price: newPrice });
+
+                // 2. Update the scanner cache if the pair exists there
+                const updatedPair = botState.scannerCache.find(p => p.symbol === symbol);
+                if (updatedPair) {
+                    const oldPrice = updatedPair.price;
+                    updatedPair.price = newPrice;
+                    updatedPair.volume = newVolume; // Update the volume in real-time
+                    updatedPair.priceDirection = newPrice > oldPrice ? 'up' : newPrice < oldPrice ? 'down' : (updatedPair.priceDirection || 'neutral');
+                    
+                    // Broadcast a full update for this pair to update the entire row in the scanner UI.
+                    broadcast({ type: 'SCANNER_UPDATE', payload: updatedPair });
+                }
+
+                // 3. Also broadcast the simple PRICE_UPDATE for other parts of the app that only care about price (like PnL calculation).
+                broadcast({ type: 'PRICE_UPDATE', payload: {symbol: symbol, price: newPrice } });
+            }
+        } catch (e) {
+            log('ERROR', `Error processing Binance WS message: ${e.message}`);
+        }
+    });
+
+    binanceWs.on('close', () => {
+        log('WARN', 'Binance WebSocket disconnected. Reconnecting in 5s...');
+        binanceWs = null;
+        reconnectBinanceWsTimeout = setTimeout(connectToBinanceStreams, 5000);
+    });
+    binanceWs.on('error', (err) => log('ERROR', `Binance WebSocket error: ${err.message}`));
+}
+
+function updateBinanceSubscriptions(baseSymbols) {
+    const symbolsFromScanner = new Set(baseSymbols);
+    const symbolsFromPositions = new Set(botState.activePositions.map(p => p.symbol));
+
+    // Union of both sets to ensure we get price updates for all relevant pairs
+    const allSymbolsForTickers = new Set([...symbolsFromScanner, ...symbolsFromPositions]);
+
+    const newStreams = new Set();
+    
+    // Ticker stream for ALL monitored symbols (scanner + positions)
+    allSymbolsForTickers.forEach(s => {
+        newStreams.add(`${s.toLowerCase()}@ticker`);
+    });
+
+    // 15m kline stream ONLY for pairs in the active scanner
+    symbolsFromScanner.forEach(s => {
+        newStreams.add(`${s.toLowerCase()}@kline_15m`);
+    });
+    
+    // 1m & 5m kline streams ONLY for pairs on the hotlist
+    botState.hotlist.forEach(s => {
+        newStreams.add(`${s.toLowerCase()}@kline_1m`);
+        newStreams.add(`${s.toLowerCase()}@kline_5m`);
+    });
+
+    // Always subscribe to BTCUSDT 1m kline for circuit breaker
+    newStreams.add('btcusdt@kline_1m');
+
+    const streamsToUnsub = [...subscribedStreams].filter(s => !newStreams.has(s));
+    const streamsToSub = [...newStreams].filter(s => !subscribedStreams.has(s));
+
+    if (binanceWs && binanceWs.readyState === WebSocket.OPEN) {
+        if (streamsToUnsub.length > 0) {
+            binanceWs.send(JSON.stringify({ method: "UNSUBSCRIBE", params: streamsToUnsub, id: 2 }));
+            log('BINANCE_WS', `Unsubscribed from ${streamsToUnsub.length} streams.`);
+        }
+        if (streamsToSub.length > 0) {
+            binanceWs.send(JSON.stringify({ method: "SUBSCRIBE", params: streamsToSub, id: 3 }));
+            log('BINANCE_WS', `Subscribed to ${streamsToSub.length} new streams.`);
+        }
+    }
+
+    subscribedStreams.clear();
+    newStreams.forEach(s => subscribedStreams.add(s));
+}
+
+function addSymbolToMicroStreams(symbol) {
+    botState.hotlist.add(symbol);
+    const streamsToAdd = [`${symbol.toLowerCase()}@kline_1m`, `${symbol.toLowerCase()}@kline_5m`];
+    const newStreams = streamsToAdd.filter(s => !subscribedStreams.has(s));
+    
+    if (newStreams.length > 0) {
+        newStreams.forEach(s => subscribedStreams.add(s));
+        if (binanceWs && binanceWs.readyState === WebSocket.OPEN) {
+            binanceWs.send(JSON.stringify({ method: "SUBSCRIBE", params: newStreams, id: Date.now() }));
+            log('BINANCE_WS', `Dynamically subscribed to micro streams for ${symbol}.`);
+        }
+        realtimeAnalyzer.hydrateSymbol(symbol, '1m');
+        realtimeAnalyzer.hydrateSymbol(symbol, '5m');
     }
 }
 
-const realtimeAnalyzer = new RealtimeAnalyzer(log);
+function removeSymbolFromMicroStreams(symbol) {
+    botState.hotlist.delete(symbol);
+    const streamsToRemove = [`${symbol.toLowerCase()}@kline_1m`, `${symbol.toLowerCase()}@kline_5m`];
+    const streamsToUnsub = streamsToRemove.filter(s => subscribedStreams.has(s));
 
-// --- State Management ---
+    if (streamsToUnsub.length > 0) {
+        streamsToUnsub.forEach(s => subscribedStreams.delete(s));
+        if (binanceWs && binanceWs.readyState === WebSocket.OPEN) {
+            binanceWs.send(JSON.stringify({ method: "UNSUBSCRIBE", params: streamsToUnsub, id: Date.now() }));
+            log('BINANCE_WS', `Dynamically unsubscribed from micro streams for ${symbol}.`);
+        }
+    }
+}
+
+// --- Crypto Sector Mapping ---
+const CRYPTO_SECTORS = {
+    // Layer 1
+    'BTC': 'L1', 'ETH': 'L1', 'BNB': 'L1', 'SOL': 'L1', 'ADA': 'L1', 'AVAX': 'L1',
+    'DOT': 'L1', 'TRX': 'L1', 'NEAR': 'L1', 'APT': 'L1', 'ALGO': 'L1', 'FTM': 'L1',
+    'SUI': 'L1', 'SEI': 'L1', 'ATOM': 'L1', 'ICP': 'L1',
+    // Layer 2
+    'MATIC': 'L2', 'OP': 'L2', 'ARB': 'L2', 'IMX': 'L2', 'MANTA': 'L2', 'STRK': 'L2',
+    // DeFi
+    'UNI': 'DeFi', 'LINK': 'DeFi', 'AAVE': 'DeFi', 'LDO': 'DeFi', 'MKR': 'DeFi',
+    'CRV': 'DeFi', 'SUSHI': 'DeFi', 'SNX': 'DeFi', 'COMP': 'DeFi', 'RUNE': 'DeFi',
+    // Memecoin
+    'DOGE': 'Meme', 'SHIB': 'Meme', 'PEPE': 'Meme', 'WIF': 'Meme', 'FLOKI': 'Meme', 'BONK': 'Meme',
+    // AI
+    'FET': 'AI', 'RNDR': 'AI', 'AGIX': 'AI', 'GRT': 'AI', 'WLD': 'AI',
+    // Gaming / Metaverse
+    'AXS': 'Gaming', 'SAND': 'Gaming', 'MANA': 'Gaming', 'GALA': 'Gaming',
+    // RWA (Real World Assets)
+    'ONDO': 'RWA', 'PENDLE': 'RWA',
+    // Catch-all
+    'XRP': 'Other', 'LTC': 'Other', 'XLM': 'Other', 'ETC': 'Other',
+};
+const getSymbolSector = (symbol) => {
+    const baseAsset = symbol.replace('USDT', '');
+    return CRYPTO_SECTORS[baseAsset] || 'Other';
+};
+
+
+// --- Bot State & Core Logic ---
 let botState = {
     settings: {},
-    balance: 0,
+    balance: 10000,
     activePositions: [],
     tradeHistory: [],
     tradeIdCounter: 1,
+    scannerCache: [], // Holds the latest state of all scanned pairs
     isRunning: true,
-    tradingMode: 'VIRTUAL',
-    scannerCache: [],
-    passwordHash: null,
-    dayStartBalance: 0,
+    tradingMode: 'VIRTUAL', // VIRTUAL, REAL_PAPER, REAL_LIVE
+    passwordHash: '',
+    recentlyLostSymbols: new Map(), // symbol -> { until: timestamp }
+    hotlist: new Set(), // Symbols ready for 1m precision entry
+    pendingConfirmation: new Map(), // symbol -> { triggerPrice, triggerTimestamp, slPriceReference, settings }
+    priceCache: new Map(), // symbol -> { price: number }
+    circuitBreakerStatus: 'NONE', // NONE, WARNING_BTC_DROP, HALTED_BTC_DROP, HALTED_DRAWDOWN, PAUSED_LOSS_STREAK, PAUSED_EXTREME_SENTIMENT
+    dayStartBalance: 10000,
     dailyPnl: 0,
     consecutiveLosses: 0,
     consecutiveWins: 0,
     currentTradingDay: new Date().toISOString().split('T')[0],
-    circuitBreakerStatus: 'NONE',
     fearAndGreed: null,
 };
 
+const scanner = new ScannerService(log, KLINE_DATA_DIR);
+let scannerInterval = null;
 
-// --- Authentication Middleware ---
-const isAuthenticated = (req, res, next) => {
-    if (req.session.isAuthenticated) {
-        return next();
+async function runScannerCycle() {
+    if (!botState.isRunning) return;
+    try {
+        const discoveredPairs = await scanner.runScan(botState.settings);
+        if (discoveredPairs.length === 0) {
+            this.log('WARN', 'No pairs found meeting volume/exclusion criteria.');
+            return [];
+        }
+        const newPairsToHydrate = [];
+        const discoveredSymbols = new Set(discoveredPairs.map(p => p.symbol));
+        const existingPairsMap = new Map(botState.scannerCache.map(p => [p.symbol, p]));
+
+        // 1. Update existing pairs from the new scan data, and identify brand new pairs.
+        for (const discoveredPair of discoveredPairs) {
+            const existingPair = existingPairsMap.get(discoveredPair.symbol);
+            if (existingPair) {
+                // The pair already exists in our cache. We update ONLY the background
+                // indicators from the fresh scan, preserving all real-time data
+                // (like score, BB width, etc.) that the RealtimeAnalyzer has calculated.
+                existingPair.volume = discoveredPair.volume;
+                existingPair.price = discoveredPair.price;
+                existingPair.price_above_ema50_4h = discoveredPair.price_above_ema50_4h;
+                existingPair.rsi_1h = discoveredPair.rsi_1h;
+                existingPair.trend_score = discoveredPair.trend_score;
+            } else {
+                // This is a new pair not seen before. Add it to the main cache
+                // and mark it for historical data hydration.
+                botState.scannerCache.push(discoveredPair);
+                newPairsToHydrate.push(discoveredPair.symbol);
+            }
+        }
+
+        // 2. Remove pairs that are no longer valid (i.e., they were not in the latest scan results)
+        botState.scannerCache = botState.scannerCache.filter(p => discoveredSymbols.has(p.symbol));
+
+        // 3. Asynchronously hydrate the new pairs to get their 15m kline data
+        if (newPairsToHydrate.length > 0) {
+            log('INFO', `New symbols detected by scanner: [${newPairsToHydrate.join(', ')}]. Hydrating...`);
+            await Promise.all(newPairsToHydrate.map(symbol => realtimeAnalyzer.hydrateSymbol(symbol, '15m')));
+        }
+
+        // 4. Update WebSocket subscriptions to match the new final list of monitored pairs
+        updateBinanceSubscriptions(botState.scannerCache.map(p => p.symbol));
+        
+    } catch (error) {
+        log('ERROR', `Scanner cycle failed: ${error.message}`);
     }
-    res.status(401).json({ message: 'Unauthorized' });
+}
+
+const settingProfiles = {
+    'Le Sniper': {
+        POSITION_SIZE_PCT: 2.0, MAX_OPEN_POSITIONS: 3, REQUIRE_STRONG_BUY: true, USE_RSI_SAFETY_FILTER: true,
+        RSI_OVERBOUGHT_THRESHOLD: 65, USE_PARABOLIC_FILTER: true, PARABOLIC_FILTER_PERIOD_MINUTES: 5,
+        PARABOLIC_FILTER_THRESHOLD_PCT: 2.5, USE_ATR_STOP_LOSS: true, ATR_MULTIPLIER: 1.5, USE_PARTIAL_TAKE_PROFIT: true,
+        PARTIAL_TP_TRIGGER_PCT: 0.8, PARTIAL_TP_SELL_QTY_PCT: 50, USE_AUTO_BREAKEVEN: true, BREAKEVEN_TRIGGER_R: 1.0,
+        ADJUST_BREAKEVEN_FOR_FEES: true, TRANSACTION_FEE_PCT: 0.1, USE_ADAPTIVE_TRAILING_STOP: true,
+        TRAILING_STOP_TIGHTEN_THRESHOLD_R: 1.5, TRAILING_STOP_TIGHTEN_MULTIPLIER_REDUCTION: 0.5, RISK_REWARD_RATIO: 5.0,
+        USE_AGGRESSIVE_ENTRY_LOGIC: false,
+    },
+    'Le Scalpeur': {
+        POSITION_SIZE_PCT: 3.0, MAX_OPEN_POSITIONS: 5, REQUIRE_STRONG_BUY: false, USE_RSI_SAFETY_FILTER: true,
+        RSI_OVERBOUGHT_THRESHOLD: 70, USE_PARABOLIC_FILTER: true, PARABOLIC_FILTER_PERIOD_MINUTES: 5,
+        PARABOLIC_FILTER_THRESHOLD_PCT: 3.5, USE_ATR_STOP_LOSS: false, STOP_LOSS_PCT: 2.0, RISK_REWARD_RATIO: 0.75,
+        USE_PARTIAL_TAKE_PROFIT: false, USE_AUTO_BREAKEVEN: false, ADJUST_BREAKEVEN_FOR_FEES: false,
+        TRANSACTION_FEE_PCT: 0.1, USE_ADAPTIVE_TRAILING_STOP: false, USE_AGGRESSIVE_ENTRY_LOGIC: false,
+    },
+    'Le Chasseur de Volatilité': {
+        POSITION_SIZE_PCT: 4.0, MAX_OPEN_POSITIONS: 8, REQUIRE_STRONG_BUY: false, USE_RSI_SAFETY_FILTER: false,
+        RSI_OVERBOUGHT_THRESHOLD: 80, USE_PARABOLIC_FILTER: false, USE_ATR_STOP_LOSS: true, ATR_MULTIPLIER: 2.0,
+        RISK_REWARD_RATIO: 3.0, USE_PARTIAL_TAKE_PROFIT: false, USE_AUTO_BREAKEVEN: true, BREAKEVEN_TRIGGER_R: 2.0,
+        ADJUST_BREAKEVEN_FOR_FEES: true, TRANSACTION_FEE_PCT: 0.1, USE_ADAPTIVE_TRAILING_STOP: true,
+        TRAILING_STOP_TIGHTEN_THRESHOLD_R: 1.0, TRAILING_STOP_TIGHTEN_MULTIPLIER_REDUCTION: 0.5,
+        USE_AGGRESSIVE_ENTRY_LOGIC: true,
+    }
 };
 
-// --- API Endpoints ---
-app.post('/api/login', async (req, res) => {
-    const { password } = req.body;
-    if (!password) {
-        return res.status(400).json({ success: false, message: 'Password is required' });
-    }
+// --- Trading Engine ---
+const tradingEngine = {
+    async evaluateAndOpenTrade(pair, slPriceReference, tradeSettings) {
+        if (!botState.isRunning) return false;
+        if (botState.circuitBreakerStatus.startsWith('HALTED') || botState.circuitBreakerStatus.startsWith('PAUSED')) {
+            log('WARN', `Trade for ${pair.symbol} blocked: Global Circuit Breaker is active (${botState.circuitBreakerStatus}).`);
+            return false;
+        }
+        
+        // --- Liquidity Filter ---
+        if (tradeSettings.USE_ORDER_BOOK_LIQUIDITY_FILTER) {
+            try {
+                const depth = await fetch(`https://api.binance.com/api/v3/depth?symbol=${pair.symbol}&limit=100`).then(res => res.json());
+                const price = pair.price;
+                const range = 0.005; // +/- 0.5%
+                const bidsInScope = depth.bids.filter(b => parseFloat(b[0]) >= price * (1 - range));
+                const asksInScope = depth.asks.filter(a => parseFloat(a[0]) <= price * (1 + range));
+                const totalBidsValue = bidsInScope.reduce((sum, b) => sum + (parseFloat(b[0]) * parseFloat(b[1])), 0);
+                const totalAsksValue = asksInScope.reduce((sum, a) => sum + (parseFloat(a[0]) * parseFloat(a[1])), 0);
+                const totalLiquidity = totalBidsValue + totalAsksValue;
+
+                if (totalLiquidity < tradeSettings.MIN_ORDER_BOOK_LIQUIDITY_USD) {
+                    log('TRADE', `[LIQUIDITY FILTER] Rejected ${pair.symbol}. Liquidity ($${totalLiquidity.toFixed(0)}) is below threshold ($${tradeSettings.MIN_ORDER_BOOK_LIQUIDITY_USD}).`);
+                    return false;
+                }
+            } catch (e) {
+                log('ERROR', `[LIQUIDITY FILTER] Failed to fetch order book for ${pair.symbol}: ${e.message}. Skipping trade.`);
+                return false;
+            }
+        }
+        
+        // --- Sector Correlation Filter ---
+        if (tradeSettings.USE_SECTOR_CORRELATION_FILTER) {
+            const newTradeSector = getSymbolSector(pair.symbol);
+            if (newTradeSector !== 'Other') {
+                const hasOpenTradeInSector = botState.activePositions.some(p => getSymbolSector(p.symbol) === newTradeSector);
+                if (hasOpenTradeInSector) {
+                    log('TRADE', `[SECTOR FILTER] Rejected ${pair.symbol}. A trade in the '${newTradeSector}' sector is already open.`);
+                    return false;
+                }
+            }
+        }
+
+        // --- Correlation Filter ---
+        const correlatedTrades = botState.activePositions.filter(p => p.symbol !== 'BTCUSDT' && p.symbol !== 'ETHUSDT').length;
+        if (correlatedTrades >= tradeSettings.MAX_CORRELATED_TRADES) {
+            log('TRADE', `[CORRELATION FILTER] Skipped trade for ${pair.symbol}. Max correlated trades (${tradeSettings.MAX_CORRELATED_TRADES}) reached.`);
+            return false;
+        }
+        
+        // --- RSI Safety Filter ---
+        if (tradeSettings.USE_RSI_SAFETY_FILTER) {
+            if (pair.rsi_1h === undefined || pair.rsi_1h === null) {
+                log('TRADE', `[RSI FILTER] Skipped trade for ${pair.symbol}. 1h RSI data not available.`);
+                return false;
+            }
+            if (pair.rsi_1h >= tradeSettings.RSI_OVERBOUGHT_THRESHOLD) {
+                log('TRADE', `[RSI FILTER] Skipped trade for ${pair.symbol}. 1h RSI (${pair.rsi_1h.toFixed(2)}) is >= threshold (${tradeSettings.RSI_OVERBOUGHT_THRESHOLD}).`);
+                return false;
+            }
+        }
+
+        // --- Parabolic Filter Check ---
+        if (tradeSettings.USE_PARABOLIC_FILTER) {
+            const klines1m = realtimeAnalyzer.klineData.get(pair.symbol)?.get('1m');
+            if (klines1m && klines1m.length >= tradeSettings.PARABOLIC_FILTER_PERIOD_MINUTES) {
+                const checkPeriodKlines = klines1m.slice(-tradeSettings.PARABOLIC_FILTER_PERIOD_MINUTES);
+                const startingPrice = checkPeriodKlines[0].open;
+                const currentPrice = pair.price;
+                const priceIncreasePct = ((currentPrice - startingPrice) / startingPrice) * 100;
+
+                if (priceIncreasePct > tradeSettings.PARABOLIC_FILTER_THRESHOLD_PCT) {
+                    log('TRADE', `[PARABOLIC FILTER] Skipped trade for ${pair.symbol}. Price increased by ${priceIncreasePct.toFixed(2)}% in the last ${tradeSettings.PARABOLIC_FILTER_PERIOD_MINUTES} minutes, exceeding threshold of ${tradeSettings.PARABOLIC_FILTER_THRESHOLD_PCT}%.`);
+                    return false; // Abort trade
+                }
+            }
+        }
+        
+        const cooldownInfo = botState.recentlyLostSymbols.get(pair.symbol);
+        if (cooldownInfo && Date.now() < cooldownInfo.until) {
+            log('TRADE', `Skipping trade for ${pair.symbol} due to recent loss cooldown.`);
+            pair.score = 'COOLDOWN'; // Ensure state reflects this
+            return false;
+        }
+
+        if (botState.activePositions.length >= tradeSettings.MAX_OPEN_POSITIONS) {
+            log('TRADE', `Skipping trade for ${pair.symbol}: Max open positions (${tradeSettings.MAX_OPEN_POSITIONS}) reached.`);
+            return false;
+        }
+
+        if (botState.activePositions.some(p => p.symbol === pair.symbol)) {
+            log('TRADE', `Skipping trade for ${pair.symbol}: Position already open.`);
+            return false;
+        }
+
+        const entryPrice = pair.price;
+        let positionSizePct = tradeSettings.POSITION_SIZE_PCT;
+        if (tradeSettings.USE_DYNAMIC_POSITION_SIZING && pair.score === 'STRONG BUY') {
+            positionSizePct = tradeSettings.STRONG_BUY_POSITION_SIZE_PCT;
+        }
+        
+        let positionSizeUSD = botState.balance * (positionSizePct / 100);
+        
+        if (botState.circuitBreakerStatus === 'WARNING_BTC_DROP') {
+            positionSizeUSD /= 2;
+            log('WARN', `[CIRCUIT BREAKER] WARNING ACTIVE. Reducing position size for ${pair.symbol} to $${positionSizeUSD.toFixed(2)}.`);
+        }
+
+        const target_quantity = positionSizeUSD / entryPrice;
+
+        const scalingInPercents = (tradeSettings.SCALING_IN_CONFIG || "").split(',').map(p => parseFloat(p.trim())).filter(p => !isNaN(p) && p > 0);
+        const useScalingIn = scalingInPercents.length > 0;
+        
+        const initial_quantity = useScalingIn ? (target_quantity * (scalingInPercents[0] / 100)) : target_quantity;
+        
+        let stopLoss;
+        if (tradeSettings.USE_ATR_STOP_LOSS && pair.atr_15m) {
+            stopLoss = entryPrice - (pair.atr_15m * tradeSettings.ATR_MULTIPLIER);
+        } else {
+            stopLoss = slPriceReference * (1 - tradeSettings.STOP_LOSS_PCT / 100);
+        }
+
+        const riskPerUnit = entryPrice - stopLoss;
+        if (riskPerUnit <= 0) {
+            log('ERROR', `Calculated risk is zero or negative for ${pair.symbol}. SL: ${stopLoss}, Entry: ${entryPrice}. Aborting trade.`);
+            return false;
+        }
+        
+        const takeProfit = entryPrice + (riskPerUnit * tradeSettings.RISK_REWARD_RATIO);
+
+        // --- REAL TRADE EXECUTION ---
+        if (botState.tradingMode === 'REAL_LIVE') {
+            if (!binanceApiClient) {
+                log('ERROR', `[REAL_LIVE] Cannot open trade for ${pair.symbol}. Binance API client not initialized.`);
+                return false;
+            }
+            try {
+                const formattedQty = formatQuantity(pair.symbol, initial_quantity);
+                log('TRADE', `>>> [REAL_LIVE] FIRING TRADE <<< Attempting to BUY ${formattedQty} ${pair.symbol} at MARKET price.`);
+                const orderResult = await binanceApiClient.createOrder(pair.symbol, 'BUY', 'MARKET', formattedQty);
+                log('BINANCE_API', `[REAL_LIVE] Order successful for ${pair.symbol}. Order ID: ${orderResult.orderId}`);
+            } catch (error) {
+                log('ERROR', `[REAL_LIVE] FAILED to place order for ${pair.symbol}. Error: ${error.message}. Aborting trade.`);
+                return false;
+            }
+        }
+        
+        const initial_cost = initial_quantity * entryPrice;
+
+        const newTrade = {
+            id: botState.tradeIdCounter++,
+            mode: botState.tradingMode,
+            symbol: pair.symbol,
+            side: 'BUY',
+            entry_price: entryPrice,
+            average_entry_price: entryPrice,
+            quantity: initial_quantity,
+            target_quantity: target_quantity,
+            total_cost_usd: initial_cost,
+            stop_loss: stopLoss,
+            initial_stop_loss: stopLoss, // Store initial SL for R calculation
+            take_profit: takeProfit,
+            highest_price_since_entry: entryPrice,
+            entry_time: new Date().toISOString(),
+            status: 'FILLED', // Assume fill for both virtual and real (since it's a market order)
+            entry_snapshot: { ...pair },
+            is_at_breakeven: false,
+            partial_tp_hit: false,
+            realized_pnl: 0,
+            trailing_stop_tightened: false,
+            is_scaling_in: useScalingIn && scalingInPercents.length > 1,
+            current_entry_count: 1,
+            total_entries: scalingInPercents.length,
+            scaling_in_percents: scalingInPercents,
+        };
+
+        log('TRADE', `>>> TRADE OPENED (ENTRY 1/${newTrade.total_entries}) <<< Opening ${botState.tradingMode} trade for ${pair.symbol}: Qty=${initial_quantity.toFixed(4)}, Entry=$${entryPrice}`);
+        
+        botState.activePositions.push(newTrade);
+        if (botState.tradingMode === 'VIRTUAL') {
+            botState.balance -= initial_cost;
+        }
+        
+        saveData('state');
+        broadcast({ type: 'POSITIONS_UPDATED' });
+        return true;
+    },
+
+    async scaleInPosition(position, newPrice, tradeSettings) {
+        if (!position.scaling_in_percents || position.current_entry_count >= position.total_entries) return;
+        
+        const nextEntryPercent = position.scaling_in_percents[position.current_entry_count];
+        const chunkQty = position.target_quantity * (nextEntryPercent / 100);
+
+        if (botState.tradingMode === 'REAL_LIVE') {
+            if (!binanceApiClient) {
+                log('ERROR', `[REAL_LIVE] Cannot scale in for ${position.symbol}. Binance API client not initialized.`);
+                return;
+            }
+            try {
+                const formattedQty = formatQuantity(position.symbol, chunkQty);
+                 log('TRADE', `[REAL_LIVE] Scaling In: Attempting to BUY ${formattedQty} ${position.symbol} at MARKET price.`);
+                const orderResult = await binanceApiClient.createOrder(position.symbol, 'BUY', 'MARKET', formattedQty);
+                log('BINANCE_API', `[REAL_LIVE] Scale-in order successful for ${position.symbol}. Order ID: ${orderResult.orderId}`);
+            } catch (error) {
+                log('ERROR', `[REAL_LIVE] FAILED to scale in for ${position.symbol}. Error: ${error.message}. Stopping scale-in for this trade.`);
+                position.is_scaling_in = false;
+                return;
+            }
+        }
+        
+        const chunkCost = chunkQty * newPrice;
+
+        if (botState.tradingMode === 'VIRTUAL' && botState.balance < chunkCost) {
+            log('WARN', `[SCALING IN] Insufficient virtual balance to scale in for ${position.symbol}.`);
+            position.is_scaling_in = false; // Stop trying to scale in
+            return;
+        }
+
+        const newTotalCost = position.total_cost_usd + chunkCost;
+        const newTotalQty = position.quantity + chunkQty;
+
+        position.average_entry_price = newTotalCost / newTotalQty;
+        position.quantity = newTotalQty;
+        position.total_cost_usd = newTotalCost;
+        position.current_entry_count++;
+        
+        if (botState.tradingMode === 'VIRTUAL') {
+            botState.balance -= chunkCost;
+        }
+
+        // Recalculate Take Profit based on new average entry price
+        const riskPerUnit = position.average_entry_price - position.initial_stop_loss;
+        position.take_profit = position.average_entry_price + (riskPerUnit * tradeSettings.RISK_REWARD_RATIO);
+
+        log('TRADE', `[SCALING IN] Entry ${position.current_entry_count}/${position.total_entries} for ${position.symbol} at $${newPrice}. New Avg Price: $${position.average_entry_price.toFixed(4)}`);
+
+        if (position.current_entry_count >= position.total_entries) {
+            position.is_scaling_in = false;
+            log('TRADE', `[SCALING IN] Final entry for ${position.symbol} complete.`);
+        }
+
+        saveData('state');
+        broadcast({ type: 'POSITIONS_UPDATED' });
+    },
+
+    monitorAndManagePositions() {
+        if (!botState.isRunning) return;
+
+        // Check for timed-out pending confirmations
+        const now = Date.now();
+        const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+        for (const [symbol, pending] of botState.pendingConfirmation.entries()) {
+            if (now - pending.triggerTimestamp > TIMEOUT_MS) {
+                log('TRADE', `[MTF] TIMEOUT: Pending signal for ${symbol} expired.`);
+                botState.pendingConfirmation.delete(symbol);
+                const pair = botState.scannerCache.find(p => p.symbol === symbol);
+                if (pair) {
+                    pair.score = 'HOLD';
+                    broadcast({ type: 'SCANNER_UPDATE', payload: pair });
+                }
+            }
+        }
+
+
+        const positionsToClose = [];
+        botState.activePositions.forEach(pos => {
+            const priceData = botState.priceCache.get(pos.symbol);
+            if (!priceData) {
+                log('WARN', `No price data available for active position ${pos.symbol}. Skipping management check.`);
+                return;
+            }
+
+            const currentPrice = priceData.price;
+            if (currentPrice > pos.highest_price_since_entry) {
+                pos.highest_price_since_entry = currentPrice;
+            }
+
+            if (currentPrice <= pos.stop_loss) {
+                positionsToClose.push({ trade: pos, exitPrice: pos.stop_loss, reason: 'Stop Loss' });
+                return;
+            }
+
+            if (currentPrice >= pos.take_profit) {
+                positionsToClose.push({ trade: pos, exitPrice: pos.take_profit, reason: 'Take Profit' });
+                return;
+            }
+
+            const s = botState.settings;
+            
+            // --- R-Multiple Calculation ---
+            let currentR = 0;
+            if (pos.initial_stop_loss) {
+                const initialRiskPerUnit = pos.average_entry_price - pos.initial_stop_loss;
+                if (initialRiskPerUnit > 0) {
+                    const currentProfitPerUnit = currentPrice - pos.average_entry_price;
+                    currentR = currentProfitPerUnit / initialRiskPerUnit;
+                }
+            }
+
+            // --- Partial Take Profit (remains Pct-based as per current implementation) ---
+            const pnlPct = ((currentPrice - pos.average_entry_price) / pos.average_entry_price) * 100;
+            if (s.USE_PARTIAL_TAKE_PROFIT && !pos.partial_tp_hit && pnlPct >= s.PARTIAL_TP_TRIGGER_PCT) {
+                this.executePartialSell(pos, currentPrice);
+            }
+
+            // --- R-Based Auto Break-even ---
+            if (s.USE_AUTO_BREAKEVEN && !pos.is_at_breakeven && currentR >= s.BREAKEVEN_TRIGGER_R) {
+                let newStopLoss = pos.average_entry_price;
+                if (s.ADJUST_BREAKEVEN_FOR_FEES && s.TRANSACTION_FEE_PCT > 0) {
+                    newStopLoss *= (1 + (s.TRANSACTION_FEE_PCT / 100) * 2);
+                }
+                pos.stop_loss = newStopLoss;
+                pos.is_at_breakeven = true;
+                log('TRADE', `[${pos.symbol}] Profit at ${currentR.toFixed(2)}R. Stop Loss moved to Break-even at $${newStopLoss.toFixed(4)}.`);
+            }
+            
+            // --- R-Based Adaptive Trailing Stop ---
+            // This logic activates AFTER break-even is hit.
+            if (s.USE_ADAPTIVE_TRAILING_STOP && pos.is_at_breakeven && pos.entry_snapshot?.atr_15m) {
+                let atrMultiplier = s.ATR_MULTIPLIER;
+                
+                // Check if we should tighten the multiplier
+                if (currentR >= s.TRAILING_STOP_TIGHTEN_THRESHOLD_R) {
+                    if (!pos.trailing_stop_tightened) {
+                        atrMultiplier -= s.TRAILING_STOP_TIGHTEN_MULTIPLIER_REDUCTION;
+                        pos.trailing_stop_tightened = true; // Mark as tightened
+                        log('TRADE', `[${pos.symbol}] Adaptive SL: Profit > ${s.TRAILING_STOP_TIGHTEN_THRESHOLD_R}R. Tightening ATR multiplier to ${atrMultiplier.toFixed(2)}.`);
+                    } else {
+                        // It's already tightened, so just use the reduced multiplier
+                         atrMultiplier -= s.TRAILING_STOP_TIGHTEN_MULTIPLIER_REDUCTION;
+                    }
+                }
+                
+                const newTrailingSL = pos.highest_price_since_entry - (pos.entry_snapshot.atr_15m * atrMultiplier);
+                
+                if (newTrailingSL > pos.stop_loss) {
+                    pos.stop_loss = newTrailingSL;
+                }
+            }
+        });
+
+        if (positionsToClose.length > 0) {
+            positionsToClose.forEach(async ({ trade, exitPrice, reason }) => {
+                await this.closeTrade(trade.id, exitPrice, reason);
+            });
+            saveData('state');
+            broadcast({ type: 'POSITIONS_UPDATED' });
+        }
+    },
+
+    async closeTrade(tradeId, exitPrice, reason = 'Manual Close') {
+        const tradeIndex = botState.activePositions.findIndex(t => t.id === tradeId);
+        if (tradeIndex === -1) {
+            log('WARN', `Could not find trade with ID ${tradeId} to close.`);
+            return null;
+        }
+
+        const trade = botState.activePositions[tradeIndex];
+
+        // --- REAL TRADE EXECUTION ---
+        if (trade.mode === 'REAL_LIVE') {
+            if (!binanceApiClient) {
+                log('ERROR', `[REAL_LIVE] Cannot close trade for ${trade.symbol}. Binance API client not initialized.`);
+                // CRITICAL: DO NOT close the position internally if the API client is down.
+                return null;
+            }
+            try {
+                const formattedQty = formatQuantity(trade.symbol, trade.quantity);
+                log('TRADE', `>>> [REAL_LIVE] CLOSING TRADE <<< Attempting to SELL ${formattedQty} ${trade.symbol} at MARKET price.`);
+                const orderResult = await binanceApiClient.createOrder(trade.symbol, 'SELL', 'MARKET', formattedQty);
+                log('BINANCE_API', `[REAL_LIVE] Close order successful for ${trade.symbol}. Order ID: ${orderResult.orderId}`);
+                // Use the actual filled price from Binance if available, otherwise use the triggered price
+                exitPrice = parseFloat(orderResult.fills[0].price);
+            } catch (error) {
+                 log('ERROR', `[REAL_LIVE] FAILED to place closing order for ${trade.symbol}. Error: ${error.message}. THE POSITION REMAINS OPEN ON BINANCE AND IN THE BOT. MANUAL INTERVENTION REQUIRED.`);
+                // CRITICAL: Do not proceed with internal closing logic if the real order fails.
+                return null;
+            }
+        }
+        
+        // --- Internal State Update (only after successful real close, or for virtual modes) ---
+        botState.activePositions.splice(tradeIndex, 1);
+        
+        trade.exit_price = exitPrice;
+        trade.exit_time = new Date().toISOString();
+        trade.status = 'CLOSED';
+
+        const exitValue = exitPrice * trade.quantity;
+        const pnl = (trade.realized_pnl || 0) + exitValue - trade.total_cost_usd;
+        
+        const initialFullPositionValue = trade.average_entry_price * trade.target_quantity;
+
+        trade.pnl = pnl;
+        trade.pnl_pct = (pnl / initialFullPositionValue) * 100;
+
+        if (trade.mode === 'VIRTUAL') {
+            botState.balance += trade.total_cost_usd + pnl;
+        } else {
+             // For REAL modes, the balance should be re-fetched from Binance periodically,
+             // but we can update it optimistically for immediate UI feedback.
+             // A full balance sync should happen after a trade.
+             botState.balance += pnl; // Approximate update
+        }
+        
+        // --- Daily Stats Update ---
+        const today = new Date().toISOString().split('T')[0];
+        if (today !== botState.currentTradingDay) {
+            log('INFO', `New trading day. Resetting daily stats. Previous day PnL: $${botState.dailyPnl.toFixed(2)}`);
+            botState.dailyPnl = 0;
+            botState.consecutiveLosses = 0;
+            botState.consecutiveWins = 0;
+            botState.currentTradingDay = today;
+            botState.dayStartBalance = botState.balance; // Set new day's starting balance
+            
+            if (botState.circuitBreakerStatus === 'HALTED_DRAWDOWN') {
+                botState.circuitBreakerStatus = 'NONE';
+                broadcast({ type: 'CIRCUIT_BREAKER_UPDATE', payload: { status: 'NONE' } });
+            }
+        }
+
+        botState.dailyPnl += pnl;
+
+        if (pnl < 0) {
+            botState.consecutiveLosses++;
+            botState.consecutiveWins = 0;
+        } else if (pnl > 0) {
+            botState.consecutiveWins++;
+            botState.consecutiveLosses = 0;
+            if (botState.circuitBreakerStatus === 'PAUSED_LOSS_STREAK') {
+                log('INFO', 'Winning trade breaks loss streak. Resuming trading.');
+                botState.circuitBreakerStatus = 'NONE';
+            }
+        }
+        
+        checkGlobalSafetyRules();
+        
+        botState.tradeHistory.push(trade);
+        
+        if (pnl < 0 && botState.settings.LOSS_COOLDOWN_HOURS > 0) {
+            const cooldownUntil = Date.now() + botState.settings.LOSS_COOLDOWN_HOURS * 60 * 60 * 1000;
+            botState.recentlyLostSymbols.set(trade.symbol, { until: cooldownUntil });
+            log('TRADE', `[${trade.symbol}] placed on cooldown until ${new Date(cooldownUntil).toLocaleString()}`);
+        }
+        
+        log('TRADE', `<<< TRADE CLOSED >>> [${reason}] Closed ${trade.symbol} at $${exitPrice.toFixed(4)}. PnL: $${pnl.toFixed(2)} (${trade.pnl_pct.toFixed(2)}%)`);
+        return trade;
+    },
     
-    let match = false;
-    try {
-        match = await verifyPassword(password, botState.passwordHash);
-    } catch (e) {
-        // This case handles a corrupted hash in the auth file
-        log('WARN', `Password hash verification failed with error: ${e.message}. Falling back to .env password.`);
+    executePartialSell(position, currentPrice) {
+        // Note: Real partial sells are not implemented for simplicity.
+        // This logic only applies to VIRTUAL mode.
+        if (position.mode !== 'VIRTUAL') return;
+
+        const s = botState.settings;
+        const initialQty = position.target_quantity;
+        const sellQty = initialQty * (s.PARTIAL_TP_SELL_QTY_PCT / 100);
+        const pnlFromSale = (currentPrice - position.average_entry_price) * sellQty;
+
+        position.quantity -= sellQty;
+        position.total_cost_usd -= position.average_entry_price * sellQty;
+        position.realized_pnl = (position.realized_pnl || 0) + pnlFromSale;
+        position.partial_tp_hit = true;
+        
+        log('TRADE', `[PARTIAL TP] Sold ${s.PARTIAL_TP_SELL_QTY_PCT}% of ${position.symbol} at $${currentPrice}. Realized PnL: $${pnlFromSale.toFixed(2)}`);
+    }
+};
+
+const checkGlobalSafetyRules = () => {
+    const s = botState.settings;
+    let newStatus = botState.circuitBreakerStatus;
+    let statusReason = "";
+
+    // If already halted for a major reason, don't change it to a lesser warning.
+    if (newStatus === 'HALTED_BTC_DROP' || newStatus === 'HALTED_DRAWDOWN') {
+        return; 
     }
 
-    if (!match) {
-        const masterPassword = process.env.APP_PASSWORD;
-        if (password === masterPassword) {
-            log('INFO', 'User logged in with master password. Auto-correcting stored password hash.');
-            match = true;
-            // Auto-correction: re-hash the master password and save it
-            botState.passwordHash = await hashPassword(masterPassword);
-            await saveData('auth');
+    // Rule 1: Daily Drawdown Limit (Highest Priority Halt)
+    const drawdownLimitUSD = (botState.dayStartBalance * (s.DAILY_DRAWDOWN_LIMIT_PCT / 100));
+    if (botState.dailyPnl < 0 && Math.abs(botState.dailyPnl) >= drawdownLimitUSD) {
+        newStatus = 'HALTED_DRAWDOWN';
+        statusReason = `Daily drawdown limit of -$${drawdownLimitUSD.toFixed(2)} reached. Trading halted for the day.`;
+    }
+    // Rule 2: Consecutive Loss Limit (Pause)
+    else if (botState.consecutiveLosses >= s.CONSECUTIVE_LOSS_LIMIT) {
+        newStatus = 'PAUSED_LOSS_STREAK';
+        statusReason = `${s.CONSECUTIVE_LOSS_LIMIT} consecutive losses reached. Trading is paused.`;
+    }
+    // Rule 3: Extreme Market Sentiment (Pause)
+    else if (s.USE_FEAR_AND_GREED_FILTER && botState.fearAndGreed) {
+        if (botState.fearAndGreed.value <= 15 || botState.fearAndGreed.value >= 85) {
+            newStatus = 'PAUSED_EXTREME_SENTIMENT';
+            statusReason = `Extreme market sentiment detected (F&G: ${botState.fearAndGreed.value}). Trading paused.`;
+        } else if (newStatus === 'PAUSED_EXTREME_SENTIMENT') {
+            newStatus = 'NONE';
+            statusReason = 'Market sentiment has returned to normal levels.';
+        }
+    }
+    // Rule 4: BTC Price Drop (Existing logic)
+    // Only check this if no other halt/pause is active yet from this check
+    else {
+        const btcKlines1m = realtimeAnalyzer.klineData.get('BTCUSDT')?.get('1m');
+        if (btcKlines1m && btcKlines1m.length >= 5) {
+            const periodKlines = btcKlines1m.slice(-5);
+            const startPrice = periodKlines[0].open;
+            const currentPrice = periodKlines[periodKlines.length - 1].close;
+            const dropPct = ((startPrice - currentPrice) / startPrice) * 100;
+
+            if (dropPct >= s.CIRCUIT_BREAKER_HALT_THRESHOLD_PCT) {
+                newStatus = 'HALTED_BTC_DROP';
+                statusReason = `BTC drop of ${dropPct.toFixed(2)}% exceeded HALT threshold.`;
+            } else if (dropPct >= s.CIRCUIT_BREAKER_WARN_THRESHOLD_PCT) {
+                newStatus = 'WARNING_BTC_DROP';
+                 statusReason = `BTC drop of ${dropPct.toFixed(2)}% exceeded WARN threshold.`;
+            } else {
+                // If we were in a BTC warning and now we are not, reset to NONE.
+                if (botState.circuitBreakerStatus === 'WARNING_BTC_DROP') {
+                    newStatus = 'NONE';
+                    statusReason = 'BTC price stabilized.';
+                }
+            }
+        }
+    }
+    
+    if (newStatus !== botState.circuitBreakerStatus) {
+        botState.circuitBreakerStatus = newStatus;
+        log('WARN', `!!! CIRCUIT BREAKER STATUS CHANGE: ${newStatus} !!! Reason: ${statusReason}`);
+        broadcast({ type: 'CIRCUIT_BREAKER_UPDATE', payload: { status: newStatus } });
+
+        if (newStatus === 'HALTED_BTC_DROP') {
+            const positionsToClose = [...botState.activePositions];
+            if (positionsToClose.length > 0) {
+                log('ERROR', `Closing ${positionsToClose.length} open positions due to Circuit Breaker HALT (BTC DROP).`);
+                positionsToClose.forEach(async pos => {
+                    const priceData = botState.priceCache.get(pos.symbol);
+                    const exitPrice = priceData ? priceData.price : pos.entry_price;
+                    await tradingEngine.closeTrade(pos.id, exitPrice, 'Circuit Breaker');
+                });
+                saveData('state');
+                broadcast({ type: 'POSITIONS_UPDATED' });
+            }
+        }
+    }
+};
+
+const fetchFearAndGreedIndex = async () => {
+    try {
+        const response = await fetch('https://api.alternative.me/fng/?limit=1');
+        if (!response.ok) {
+            throw new Error(`API returned status ${response.status}`);
+        }
+        const data = await response.json();
+        if (data && data.data && data.data.length > 0) {
+            const fng = data.data[0];
+            const fngData = {
+                value: parseInt(fng.value, 10),
+                classification: fng.value_classification,
+            };
+            botState.fearAndGreed = fngData;
+            broadcast({ type: 'FEAR_AND_GREED_UPDATE', payload: fngData });
+            // After updating, check the rules
+            checkGlobalSafetyRules();
+        }
+    } catch (error) {
+        log('ERROR', `Failed to fetch Fear & Greed Index: ${error.message}`);
+    }
+};
+
+// --- Main Application Loop ---
+const startBot = async () => {
+    if (scannerInterval) clearInterval(scannerInterval);
+    
+    if (botState.settings.BINANCE_API_KEY && botState.settings.BINANCE_SECRET_KEY) {
+        binanceApiClient = new BinanceApiClient(botState.settings.BINANCE_API_KEY, botState.settings.BINANCE_SECRET_KEY, log);
+        try {
+            const exchangeInfo = await binanceApiClient.getExchangeInfo();
+            exchangeInfo.symbols.forEach(s => {
+                const lotSizeFilter = s.filters.find(f => f.filterType === 'LOT_SIZE');
+                if (lotSizeFilter) {
+                    symbolRules.set(s.symbol, {
+                        stepSize: parseFloat(lotSizeFilter.stepSize)
+                    });
+                }
+            });
+            log('INFO', `Cached trading rules for ${symbolRules.size} symbols.`);
+        } catch (e) {
+            log('ERROR', 'Failed to initialize Binance API client with exchange info. Real trading will fail.');
         }
     }
 
-    if (match) {
-        req.session.isAuthenticated = true;
-        res.json({ success: true, message: 'Login successful' });
+    // Initial scan, then set interval
+    runScannerCycle(); 
+    scannerInterval = setInterval(runScannerCycle, botState.settings.SCANNER_DISCOVERY_INTERVAL_SECONDS * 1000);
+    
+    setInterval(() => {
+        if (botState.isRunning) {
+            tradingEngine.monitorAndManagePositions();
+        }
+    }, 1000); // Manage positions every second for high-frequency checks
+    
+    // Fetch Fear & Greed index periodically
+    fetchFearAndGreedIndex();
+    setInterval(fetchFearAndGreedIndex, 15 * 60 * 1000); // Every 15 minutes
+
+    connectToBinanceStreams();
+    log('INFO', 'Bot started. Initializing scanner and position manager...');
+};
+
+// --- API Endpoints ---
+const requireAuth = (req, res, next) => {
+    if (req.session && req.session.isAuthenticated) {
+        next();
     } else {
-        res.status(401).json({ success: false, message: 'Invalid password' });
+        res.status(401).json({ message: 'Unauthorized' });
+    }
+};
+
+// --- AUTH ---
+app.post('/api/login', async (req, res) => {
+    const { password } = req.body;
+    try {
+        const isValid = await verifyPassword(password, botState.passwordHash);
+        if (isValid) {
+            req.session.isAuthenticated = true;
+            res.json({ success: true, message: 'Login successful.' });
+        } else {
+            res.status(401).json({ success: false, message: 'Invalid credentials.' });
+        }
+    } catch (error) {
+        log('ERROR', `Login attempt failed: ${error.message}`);
+        res.status(500).json({ success: false, message: 'Internal server error during login.' });
     }
 });
 
 app.post('/api/logout', (req, res) => {
-    req.session.destroy();
-    res.status(204).send();
+    req.session.destroy(err => {
+        if (err) {
+            return res.status(500).json({ message: 'Could not log out.' });
+        }
+        res.clearCookie('connect.sid');
+        res.status(204).send();
+    });
 });
 
 app.get('/api/check-session', (req, res) => {
-    res.json({ isAuthenticated: !!req.session.isAuthenticated });
+    if (req.session && req.session.isAuthenticated) {
+        res.json({ isAuthenticated: true });
+    } else {
+        res.json({ isAuthenticated: false });
+    }
 });
 
-app.post('/api/change-password', isAuthenticated, async (req, res) => {
+app.post('/api/change-password', requireAuth, async (req, res) => {
     const { newPassword } = req.body;
     if (!newPassword || newPassword.length < 8) {
         return res.status(400).json({ success: false, message: 'Password must be at least 8 characters long.' });
     }
-    botState.passwordHash = await hashPassword(newPassword);
-    await saveData('auth');
-    res.json({ success: true, message: 'Password updated successfully.' });
+    try {
+        botState.passwordHash = await hashPassword(newPassword);
+        await saveData('auth');
+        log('INFO', 'User password has been successfully updated.');
+        res.json({ success: true, message: 'Password updated successfully.' });
+    } catch (error) {
+        log('ERROR', `Failed to update password: ${error.message}`);
+        res.status(500).json({ success: false, message: 'Internal server error.' });
+    }
 });
 
-app.get('/api/settings', isAuthenticated, (req, res) => {
+
+// --- SETTINGS ---
+app.get('/api/settings', requireAuth, (req, res) => {
     res.json(botState.settings);
 });
 
-app.post('/api/settings', isAuthenticated, async (req, res) => {
-    const newSettings = req.body;
-    botState.settings = { ...botState.settings, ...newSettings };
-    realtimeAnalyzer.updateSettings(botState.settings);
-    // Re-initialize Binance API client if keys changed
-    if (newSettings.BINANCE_API_KEY || newSettings.BINANCE_SECRET_KEY) {
-        binanceApiClient = new BinanceApiClient(botState.settings.BINANCE_API_KEY, botState.settings.BINANCE_SECRET_KEY, log);
+app.post('/api/settings', requireAuth, async (req, res) => {
+    const oldSettings = { ...botState.settings };
+    
+    // Update settings in memory
+    botState.settings = { ...botState.settings, ...req.body };
+    
+    // If virtual balance setting is changed while in VIRTUAL mode, update the current balance.
+    if (botState.tradingMode === 'VIRTUAL' && botState.settings.INITIAL_VIRTUAL_BALANCE !== oldSettings.INITIAL_VIRTUAL_BALANCE) {
+        botState.balance = botState.settings.INITIAL_VIRTUAL_BALANCE;
+        log('INFO', `Virtual balance was adjusted to match new setting: $${botState.balance}`);
+        await saveData('state'); // Persist the new balance
+        // Trigger a refresh on the frontend to show the new balance.
+        broadcast({ type: 'POSITIONS_UPDATED' });
     }
+
     await saveData('settings');
+    realtimeAnalyzer.updateSettings(botState.settings);
+    
+    // If API keys change, re-initialize the client
+    if (botState.settings.BINANCE_API_KEY !== oldSettings.BINANCE_API_KEY || botState.settings.BINANCE_SECRET_KEY !== oldSettings.BINANCE_SECRET_KEY) {
+        log('INFO', 'Binance API keys updated. Re-initializing API client.');
+        if (botState.settings.BINANCE_API_KEY && botState.settings.BINANCE_SECRET_KEY) {
+            binanceApiClient = new BinanceApiClient(botState.settings.BINANCE_API_KEY, botState.settings.BINANCE_SECRET_KEY, log);
+        } else {
+            binanceApiClient = null;
+        }
+    }
+    
+    // Restart scanner interval only if the timing changed
+    if (botState.settings.SCANNER_DISCOVERY_INTERVAL_SECONDS !== oldSettings.SCANNER_DISCOVERY_INTERVAL_SECONDS) {
+        log('INFO', `Scanner interval updated to ${botState.settings.SCANNER_DISCOVERY_INTERVAL_SECONDS} seconds.`);
+        if (scannerInterval) clearInterval(scannerInterval);
+        scannerInterval = setInterval(runScannerCycle, botState.settings.SCANNER_DISCOVERY_INTERVAL_SECONDS * 1000);
+    }
+    
     res.json({ success: true });
 });
 
-app.get('/api/status', isAuthenticated, (req, res) => {
-    const { balance, activePositions, scannerCache, settings } = botState;
+// --- DATA & STATUS ---
+app.get('/api/status', requireAuth, (req, res) => {
     res.json({
         mode: botState.tradingMode,
-        balance,
-        positions: activePositions.length,
-        monitored_pairs: scannerCache.length,
-        top_pairs: scannerCache.slice(0, 10).map(p => p.symbol),
-        max_open_positions: settings.MAX_OPEN_POSITIONS
+        balance: botState.balance,
+        positions: botState.activePositions.length,
+        monitored_pairs: botState.scannerCache.length,
+        top_pairs: botState.scannerCache
+            .sort((a, b) => (b.score_value || 0) - (a.score_value || 0))
+            .slice(0, 15)
+            .map(p => p.symbol),
+        max_open_positions: botState.settings.MAX_OPEN_POSITIONS
     });
 });
 
-app.get('/api/positions', isAuthenticated, (req, res) => {
-    res.json(botState.activePositions);
+app.get('/api/positions', requireAuth, (req, res) => {
+    // Augment positions with current price from scanner cache for frontend display
+    const augmentedPositions = botState.activePositions.map(pos => {
+        const priceData = botState.priceCache.get(pos.symbol);
+        const currentPrice = priceData ? priceData.price : pos.average_entry_price;
+        const current_value = currentPrice * pos.quantity;
+        const pnl = (pos.realized_pnl || 0) + current_value - pos.total_cost_usd;
+        
+        const initialFullPositionValue = pos.average_entry_price * pos.target_quantity;
+        const pnl_pct = initialFullPositionValue > 0 ? (pnl / initialFullPositionValue) * 100 : 0;
+
+        return {
+            ...pos,
+            current_price: currentPrice,
+            pnl: pnl,
+            pnl_pct: pnl_pct,
+        };
+    });
+    res.json(augmentedPositions);
 });
 
-app.get('/api/history', isAuthenticated, (req, res) => {
+app.get('/api/history', requireAuth, (req, res) => {
     res.json(botState.tradeHistory);
 });
 
-app.get('/api/performance-stats', isAuthenticated, (req, res) => {
-    const { tradeHistory } = botState;
-    const total_trades = tradeHistory.length;
-    const winning_trades = tradeHistory.filter(t => t.pnl > 0).length;
-    const losing_trades = total_trades - winning_trades;
-    const total_pnl = tradeHistory.reduce((sum, t) => sum + (t.pnl || 0), 0);
+app.get('/api/performance-stats', requireAuth, (req, res) => {
+    const total_trades = botState.tradeHistory.length;
+    const winning_trades = botState.tradeHistory.filter(t => (t.pnl || 0) > 0).length;
+    const losing_trades = botState.tradeHistory.filter(t => (t.pnl || 0) < 0).length;
+    const total_pnl = botState.tradeHistory.reduce((sum, t) => sum + (t.pnl || 0), 0);
     const win_rate = total_trades > 0 ? (winning_trades / total_trades) * 100 : 0;
-    const avg_pnl_pct = total_trades > 0 ? tradeHistory.reduce((sum, t) => sum + (t.pnl_pct || 0), 0) / total_trades : 0;
+    
+    const pnlPcts = botState.tradeHistory.map(t => t.pnl_pct).filter(p => p !== undefined && p !== null);
+    const avg_pnl_pct = pnlPcts.length > 0 ? pnlPcts.reduce((a, b) => a + b, 0) / pnlPcts.length : 0;
 
-    res.json({ total_trades, winning_trades, losing_trades, total_pnl, avg_pnl_pct, win_rate });
+    res.json({ total_trades, winning_trades, losing_trades, total_pnl, win_rate, avg_pnl_pct });
 });
 
-app.get('/api/scanner', isAuthenticated, (req, res) => {
+app.get('/api/scanner', requireAuth, (req, res) => {
     res.json(botState.scannerCache);
 });
 
-app.post('/api/close-trade/:id', isAuthenticated, async (req, res) => {
+
+// --- ACTIONS ---
+app.post('/api/open-trade', requireAuth, (req, res) => {
+    // Manual trade opening logic can be added here if needed
+    res.status(501).json({ message: 'Manual trade opening not implemented.' });
+});
+
+app.post('/api/close-trade/:id', requireAuth, async (req, res) => {
     const tradeId = parseInt(req.params.id, 10);
-    log('TRADE', `Manual close requested for trade ID ${tradeId}`);
-    try {
-        const result = await closeTrade(tradeId, true); // true for manual close
-        res.json(result);
-    } catch (error) {
-        log('ERROR', `Manual close for trade ${tradeId} failed: ${error.message}`);
-        res.status(500).json({ success: false, message: error.message });
+    const trade = botState.activePositions.find(t => t.id === tradeId);
+    if (!trade) return res.status(404).json({ message: 'Trade not found.' });
+
+    const priceData = botState.priceCache.get(trade.symbol);
+    const exitPrice = priceData ? priceData.price : trade.average_entry_price;
+
+    const closedTrade = await tradingEngine.closeTrade(tradeId, exitPrice, 'Manual Close');
+    if (closedTrade) {
+        saveData('state');
+        broadcast({ type: 'POSITIONS_UPDATED' });
+        res.json(closedTrade);
+    } else {
+        res.status(500).json({ message: 'Failed to close trade on exchange. Position remains open.' });
     }
 });
 
-app.post('/api/clear-data', isAuthenticated, async (req, res) => {
+app.post('/api/clear-data', requireAuth, async (req, res) => {
+    log('WARN', 'User initiated data clear. Resetting all trade history and balance.');
+    botState.balance = botState.settings.INITIAL_VIRTUAL_BALANCE;
     botState.activePositions = [];
     botState.tradeHistory = [];
-    botState.balance = botState.settings.INITIAL_VIRTUAL_BALANCE;
-    botState.dayStartBalance = botState.settings.INITIAL_VIRTUAL_BALANCE;
-    botState.dailyPnl = 0;
-    botState.consecutiveLosses = 0;
     botState.tradeIdCounter = 1;
     await saveData('state');
     broadcast({ type: 'POSITIONS_UPDATED' });
     res.json({ success: true });
 });
 
-app.post('/api/test-connection', isAuthenticated, async (req, res) => {
+// --- CONNECTION TESTS ---
+app.post('/api/test-connection', requireAuth, async (req, res) => {
     const { apiKey, secretKey } = req.body;
-    const tempClient = new BinanceApiClient(apiKey, secretKey, log);
+    if (!apiKey || !secretKey) {
+        return res.status(400).json({ success: false, message: "API Key and Secret Key are required." });
+    }
+    const tempApiClient = new BinanceApiClient(apiKey, secretKey, log);
     try {
-        await tempClient.getAccountInfo();
-        res.json({ success: true, message: 'Connexion à Binance réussie !' });
+        await tempApiClient.getAccountInfo();
+        res.json({ success: true, message: 'Connexion à Binance et validation des clés réussies !' });
     } catch (error) {
-        res.status(400).json({ success: false, message: `Échec de la connexion : ${error.message}` });
+        res.status(500).json({ success: false, message: `Échec de la connexion à Binance : ${error.message}` });
     }
 });
 
-app.get('/api/bot/status', isAuthenticated, (req, res) => {
+
+// --- BOT CONTROL ---
+app.get('/api/bot/status', requireAuth, (req, res) => {
     res.json({ isRunning: botState.isRunning });
 });
-
-app.post('/api/bot/start', isAuthenticated, (req, res) => {
+app.post('/api/bot/start', requireAuth, async (req, res) => {
     botState.isRunning = true;
+    await saveData('state');
     log('INFO', 'Bot has been started via API.');
-    saveData('state');
     res.json({ success: true });
 });
-
-app.post('/api/bot/stop', isAuthenticated, (req, res) => {
+app.post('/api/bot/stop', requireAuth, async (req, res) => {
     botState.isRunning = false;
+    await saveData('state');
     log('INFO', 'Bot has been stopped via API.');
-    saveData('state');
     res.json({ success: true });
 });
-
-app.get('/api/mode', isAuthenticated, (req, res) => {
+app.get('/api/mode', requireAuth, (req, res) => {
     res.json({ mode: botState.tradingMode });
 });
-
-app.post('/api/mode', isAuthenticated, async (req, res) => {
+app.post('/api/mode', requireAuth, async (req, res) => {
     const { mode } = req.body;
     if (['VIRTUAL', 'REAL_PAPER', 'REAL_LIVE'].includes(mode)) {
         botState.tradingMode = mode;
-        if (mode.startsWith('REAL')) {
-            // Fetch real balance from Binance
-            try {
-                if (!binanceApiClient) {
-                     binanceApiClient = new BinanceApiClient(botState.settings.BINANCE_API_KEY, botState.settings.BINANCE_SECRET_KEY, log);
-                }
+        if (mode === 'VIRTUAL') {
+            botState.balance = botState.settings.INITIAL_VIRTUAL_BALANCE; // Reset to virtual balance
+            log('INFO', 'Switched to VIRTUAL mode. Balance reset to virtual start.');
+        } else if (mode === 'REAL_LIVE' || mode === 'REAL_PAPER') {
+             if (!binanceApiClient) {
+                 botState.tradingMode = 'VIRTUAL'; // Revert
+                 await saveData('state');
+                 return res.status(400).json({ success: false, message: 'Binance API keys not set. Cannot switch to REAL mode.' });
+             }
+             try {
                 const accountInfo = await binanceApiClient.getAccountInfo();
                 const usdtBalance = accountInfo.balances.find(b => b.asset === 'USDT');
-                botState.balance = usdtBalance ? parseFloat(usdtBalance.free) : 0;
-                log('INFO', `Switched to ${mode} mode. Real USDT balance: ${botState.balance}`);
-            } catch (error) {
-                 log('ERROR', `Failed to fetch real balance when switching to ${mode} mode. Error: ${error.message}`);
-                 return res.status(500).json({ success: false, message: 'Failed to fetch Binance balance.' });
-            }
-        } else {
-            // Reset to virtual balance from last state or initial settings
-            const stateContent = await fs.readFile(STATE_FILE_PATH, 'utf-8').catch(() => '{}');
-            const persistedState = JSON.parse(stateContent);
-            botState.balance = persistedState.balance || botState.settings.INITIAL_VIRTUAL_BALANCE;
-            log('INFO', `Switched to VIRTUAL mode. Balance reset to ${botState.balance}`);
+                if (usdtBalance) {
+                    botState.balance = parseFloat(usdtBalance.free);
+                    log('INFO', `Switched to ${mode} mode. Real USDT balance fetched: $${botState.balance.toFixed(2)}`);
+                } else {
+                    botState.balance = 0;
+                    log('WARN', `Switched to ${mode} mode, but no USDT balance found.`);
+                }
+             } catch(error) {
+                 botState.tradingMode = 'VIRTUAL'; // Revert on error
+                 await saveData('state');
+                 return res.status(500).json({ success: false, message: `Failed to fetch real balance: ${error.message}` });
+             }
         }
         await saveData('state');
+        log('INFO', `Trading mode switched to ${mode}.`);
+        broadcast({ type: 'POSITIONS_UPDATED' }); // Trigger a full refresh
         res.json({ success: true, mode: botState.tradingMode });
     } else {
-        res.status(400).json({ success: false, message: 'Invalid mode' });
+        res.status(400).json({ success: false, message: 'Invalid mode.' });
     }
 });
 
-// Serve frontend build
+// --- Serve Frontend ---
 const __dirname = path.resolve();
-app.use(express.static(path.join(__dirname, 'dist')));
+app.use(express.static(path.join(__dirname, '..', 'dist')));
 app.get('*', (req, res) => {
-    if (!req.path.startsWith('/api/')) {
-        res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-    }
+    res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
 });
 
-// --- FULL IMPLEMENTATION OF TRADING LOGIC ---
-const scannerService = new ScannerService(log, KLINE_DATA_DIR);
-
-// Binance WebSocket Client for Kline Data
-class BinanceWsClient {
-    constructor(log, onKlineUpdate) {
-        this.log = log;
-        this.onKlineUpdate = onKlineUpdate;
-        this.ws = null;
-        this.subscriptions = new Map();
-        this.baseUrl = 'wss://stream.binance.com:9443/stream';
-    }
-
-    connect() {
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
-        this.ws = new WebSocket(this.baseUrl);
-        this.ws.on('open', () => this.log('BINANCE_WS', 'Connected to Binance kline streams.'));
-        this.ws.on('message', (data) => {
-            const message = JSON.parse(data.toString());
-            if (message.stream && message.data && message.data.k) {
-                const kline = message.data.k;
-                this.onKlineUpdate(
-                    kline.s,
-                    kline.i,
-                    {
-                        open: parseFloat(kline.o),
-                        high: parseFloat(kline.h),
-                        low: parseFloat(kline.l),
-                        close: parseFloat(kline.c),
-                        volume: parseFloat(kline.v),
-                        isFinal: kline.x,
-                        startTime: kline.t,
-                    }
-                );
-            }
-        });
-        this.ws.on('close', () => { this.log('WARN', 'Binance WS disconnected. Reconnecting...'); setTimeout(() => this.connect(), 5000); });
-        this.ws.on('error', (err) => this.log('ERROR', `Binance WS error: ${err.message}`));
-    }
-
-    subscribe(symbols, intervals) {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            this.log('WARN', 'Binance WS not connected. Cannot subscribe.');
-            return;
-        }
-        const newStreams = [];
-        for (const symbol of symbols) {
-            for (const interval of intervals) {
-                const streamName = `${symbol.toLowerCase()}@kline_${interval}`;
-                if (!this.subscriptions.has(streamName)) {
-                    newStreams.push(streamName);
-                    this.subscriptions.set(streamName, true);
-                }
-            }
-        }
-        if (newStreams.length > 0) {
-            this.log('BINANCE_WS', `Subscribing to ${newStreams.length} new streams...`);
-            this.ws.send(JSON.stringify({ method: 'SUBSCRIBE', params: newStreams, id: Date.now() }));
-        }
-    }
-}
-
-const binanceWsClient = new BinanceWsClient(log, handleKlineUpdate);
-
-async function handleKlineUpdate(symbol, interval, kline) {
-    const symbolData = realtimeAnalyzer.klineData.get(symbol);
-    if (!symbolData) return;
-    
-    let klines = symbolData.get(interval);
-    if (!klines) {
-        klines = [];
-        symbolData.set(interval, klines);
-    }
-    
-    if (klines.length > 0 && klines[klines.length - 1].startTime === kline.startTime) {
-        // Update the last candle
-        klines[klines.length - 1] = kline;
-    } else {
-        // Add a new candle
-        klines.push(kline);
-        if (klines.length > 200) klines.shift(); // Keep buffer size manageable
-    }
-
-    if (kline.isFinal) {
-        // A full candle has closed, run analyses
-        if (interval === '15m') realtimeAnalyzer.analyze15mIndicators(symbol);
-        if (interval === '1m') realtimeAnalyzer.analyze1mTrigger(symbol, klines);
-        if (interval === '5m') realtimeAnalyzer.confirm5mEntry(symbol, klines);
-    }
-}
-
-async function startBot() {
-    log('INFO', 'Starting BOTPY Trading Engine...');
-    
-    // Initial setup
-    binanceApiClient = new BinanceApiClient(botState.settings.BINANCE_API_KEY, botState.settings.BINANCE_SECRET_KEY, log);
+// --- Initialize and Start Server ---
+(async () => {
     try {
-        const exchangeInfo = await binanceApiClient.getExchangeInfo();
-        exchangeInfo.symbols.forEach(s => {
-            const lotSizeFilter = s.filters.find(f => f.filterType === 'LOT_SIZE');
-            symbolRules.set(s.symbol, {
-                stepSize: lotSizeFilter ? parseFloat(lotSizeFilter.stepSize) : 0.00000001,
-            });
-            cryptoSectors.set(s.baseAsset, 'UNKNOWN'); // Placeholder for sector mapping
+        await loadData();
+        startBot();
+        server.listen(port, () => {
+            log('INFO', `Server running on http://localhost:${port}`);
         });
-    } catch (e) {
-        log('ERROR', `Could not fetch exchange info. Real trading will fail. ${e.message}`);
+    } catch (error) {
+        log('ERROR', `Failed to initialize and start server: ${error.message}`);
+        process.exit(1);
     }
-
-    binanceWsClient.connect();
-    
-    // Main Loops
-    const runDiscoveryScan = async () => {
-        if (!botState.isRunning) return;
-        try {
-            const discoveredPairs = await scannerService.runScan(botState.settings);
-            botState.scannerCache = discoveredPairs;
-            // Subscribe to kline data for all monitored pairs
-            const symbols = discoveredPairs.map(p => p.symbol);
-            binanceWsClient.subscribe(symbols, ['15m', '1m', '5m']);
-            
-            // Hydrate kline data for newly discovered pairs
-            for (const symbol of symbols) {
-                if (!realtimeAnalyzer.klineData.has(symbol)) {
-                    realtimeAnalyzer.klineData.set(symbol, new Map());
-                    await Promise.all([
-                        scannerService.fetchKlinesFromBinance(symbol, '15m').then(d => realtimeAnalyzer.klineData.get(symbol).set('15m', d.map(k=>({open:parseFloat(k[1]),high:parseFloat(k[2]),low:parseFloat(k[3]),close:parseFloat(k[4]),volume:parseFloat(k[5]),startTime:k[0]})))),
-                        scannerService.fetchKlinesFromBinance(symbol, '1m').then(d => realtimeAnalyzer.klineData.get(symbol).set('1m', d.map(k=>({open:parseFloat(k[1]),high:parseFloat(k[2]),low:parseFloat(k[3]),close:parseFloat(k[4]),volume:parseFloat(k[5]),startTime:k[0]})))),
-                        scannerService.fetchKlinesFromBinance(symbol, '5m').then(d => realtimeAnalyzer.klineData.get(symbol).set('5m', d.map(k=>({open:parseFloat(k[1]),high:parseFloat(k[2]),low:parseFloat(k[3]),close:parseFloat(k[4]),volume:parseFloat(k[5]),startTime:k[0]})))),
-                    ]);
-                }
-            }
-        } catch (e) {
-            log('ERROR', `Discovery scan loop failed: ${e.message}`);
-        }
-    };
-
-    const managePositions = () => {
-        // This function would check for SL/TP hits
-        // For simplicity in this context, we will rely on manual close or assume it's part of a separate process
-    };
-
-    const fetchFearAndGreed = async () => {
-        try {
-            const response = await fetch('https://api.alternative.me/fng/?limit=1');
-            const data = await response.json();
-            if (data && data.data && data.data[0]) {
-                const fng = data.data[0];
-                botState.fearAndGreed = {
-                    value: parseInt(fng.value, 10),
-                    classification: fng.value_classification,
-                };
-                broadcast({ type: 'FEAR_AND_GREED_UPDATE', payload: botState.fearAndGreed });
-            }
-        } catch (e) {
-            log('WARN', `Could not fetch Fear & Greed index: ${e.message}`);
-        }
-    };
-
-    // Run loops at intervals
-    await runDiscoveryScan();
-    await fetchFearAndGreed();
-    setInterval(runDiscoveryScan, botState.settings.SCANNER_DISCOVERY_INTERVAL_SECONDS * 1000);
-    setInterval(managePositions, 1000); // Check positions every second
-    setInterval(fetchFearAndGreed, 15 * 60 * 1000); // Fetch F&G every 15 mins
-}
-
-async function openTrade(pair) {
-    if (!botState.isRunning) return log('WARN', `[${pair.symbol}] Trade signal received but bot is stopped.`);
-    if (botState.activePositions.length >= botState.settings.MAX_OPEN_POSITIONS) return log('WARN', `[${pair.symbol}] Trade signal ignored. Max open positions reached.`);
-
-    // --- Calculate Position Details ---
-    const positionSizeUSD = botState.balance * (botState.settings.POSITION_SIZE_PCT / 100);
-    const quantity = formatQuantity(pair.symbol, positionSizeUSD / pair.price);
-    const stopLossPrice = pair.price - (pair.atr_15m * botState.settings.ATR_MULTIPLIER);
-    const takeProfitPrice = pair.price + ((pair.price - stopLossPrice) * botState.settings.RISK_REWARD_RATIO);
-
-    const trade = {
-        id: botState.tradeIdCounter++,
-        mode: botState.tradingMode,
-        symbol: pair.symbol,
-        side: 'BUY',
-        entry_price: pair.price,
-        average_entry_price: pair.price,
-        quantity,
-        stop_loss: stopLossPrice,
-        take_profit: takeProfitPrice,
-        entry_time: new Date().toISOString(),
-        status: 'PENDING',
-        entry_snapshot: pair,
-        total_cost_usd: positionSizeUSD,
-    };
-    
-    // --- Execute Order ---
-    if (botState.tradingMode === 'REAL_LIVE') {
-        try {
-            const order = await binanceApiClient.createOrder(trade.symbol, 'BUY', 'MARKET', trade.quantity);
-            trade.status = 'FILLED';
-            // Here you would update trade with actual filled price and quantity from `order` response
-            log('TRADE', `[REAL] Successfully opened position for ${trade.symbol}.`);
-        } catch (e) {
-            log('ERROR', `[REAL] FAILED to open position for ${trade.symbol}: ${e.message}`);
-            return; // Abort if real order fails
-        }
-    } else {
-        trade.status = 'FILLED';
-        log('TRADE', `[${botState.tradingMode}] Successfully opened position for ${trade.symbol}.`);
-    }
-
-    // --- Update State ---
-    botState.activePositions.push(trade);
-    botState.balance -= positionSizeUSD;
-    await saveData('state');
-    broadcast({ type: 'POSITIONS_UPDATED' });
-}
-
-async function closeTrade(tradeId, isManual = false) {
-    const tradeIndex = botState.activePositions.findIndex(p => p.id === tradeId);
-    if (tradeIndex === -1) throw new Error(`Trade with ID ${tradeId} not found.`);
-    
-    const trade = botState.activePositions[tradeIndex];
-    const pair = botState.scannerCache.find(p => p.symbol === trade.symbol);
-    const exitPrice = pair ? pair.price : trade.entry_price; // Use live price if available
-
-    trade.exit_price = exitPrice;
-    trade.exit_time = new Date().toISOString();
-    trade.status = 'CLOSED';
-    trade.pnl = (trade.exit_price - trade.entry_price) * trade.quantity;
-    trade.pnl_pct = (trade.pnl / trade.total_cost_usd) * 100;
-
-    if (botState.tradingMode === 'REAL_LIVE') {
-        try {
-            await binanceApiClient.createOrder(trade.symbol, 'SELL', 'MARKET', trade.quantity);
-            log('TRADE', `[REAL] Successfully closed position for ${trade.symbol}.`);
-        } catch (e) {
-            log('ERROR', `[REAL] CRITICAL: FAILED to close position for ${trade.symbol}: ${e.message}. Manual intervention required.`);
-            // Do NOT proceed if the real order fails.
-            throw new Error(`Binance order execution failed: ${e.message}`);
-        }
-    } else {
-        log('TRADE', `[${botState.tradingMode}] Closed position for ${trade.symbol}. PnL: $${trade.pnl.toFixed(2)} (${trade.pnl_pct.toFixed(2)}%)`);
-    }
-
-    // --- Update State ---
-    botState.balance += trade.total_cost_usd + trade.pnl;
-    botState.activePositions.splice(tradeIndex, 1);
-    botState.tradeHistory.push(trade);
-
-    await saveData('state');
-    broadcast({ type: 'POSITIONS_UPDATED' });
-    return { success: true, trade };
-}
-
-
-// --- Initialization ---
-const startServer = async () => {
-    await loadData();
-    log('INFO', 'Bot state and settings loaded.');
-    server.listen(port, () => {
-        log('INFO', `Server running on port ${port}`);
-        startBot(); // Start the bot logic
-    });
-};
-
-startServer();
+})();
