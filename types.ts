@@ -73,6 +73,7 @@ export interface StrategyConditions {
     structure?: boolean;
     obv?: boolean; // 1m OBV
     rsi_mtf?: boolean; // New: 15m RSI safety check
+    cvd?: boolean; // New: 1m Cumulative Volume Delta check
 }
 
 export interface ScannedPair {
@@ -212,6 +213,7 @@ export interface BotSettings {
     USE_WICK_DETECTION_FILTER: boolean; // New: Check for large upper wicks on trigger candle
     MAX_UPPER_WICK_PCT: number; // New
     USE_OBV_5M_VALIDATION: boolean; // New: Validate OBV on 5m chart after confirmation
+    USE_CVD_FILTER: boolean; // New: Cumulative Volume Delta check
 
     // --- PORTFOLIO INTELLIGENCE ---
     SCALING_IN_CONFIG: string; // New: Flexible scaling in, e.g., "50,50" or "40,30,30"

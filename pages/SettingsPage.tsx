@@ -144,7 +144,8 @@ const tooltips: Record<string, string> = {
     RSI_15M_OVERBOUGHT_THRESHOLD: "Le seuil RSI sur 15 minutes au-delà duquel un signal d'achat sera ignoré.",
     USE_WICK_DETECTION_FILTER: "Filtre Anti-Piège : rejette les signaux d'entrée si la bougie de déclenchement a une mèche supérieure anormalement grande, indiquant un rejet du prix.",
     MAX_UPPER_WICK_PCT: "Le pourcentage maximum de la mèche supérieure par rapport à la taille totale de la bougie. Au-delà de ce seuil, le signal est ignoré.",
-    USE_OBV_5M_VALIDATION: "Confirmation de Volume Multi-Échelles : Exige que la tendance de l'OBV soit également haussière sur l'unité de temps de 5 minutes après la confirmation, pour éviter les divergences."
+    USE_OBV_5M_VALIDATION: "Confirmation de Volume Multi-Échelles : Exige que la tendance de l'OBV soit également haussière sur l'unité de temps de 5 minutes après la confirmation, pour éviter les divergences.",
+    USE_CVD_FILTER: "Filtre de Confirmation d'Agressivité (CVD) : Exige que le Cumulative Volume Delta (approximé) soit en hausse sur la bougie de déclenchement. Confirme que les acheteurs au marché sont dominants, un signe de forte conviction."
 };
 
 const inputClass = "mt-1 block w-full rounded-md border-[#3e4451] bg-[#0c0e12] shadow-sm focus:border-[#f0b90b] focus:ring-[#f0b90b] sm:text-sm text-white";
@@ -505,6 +506,8 @@ const SettingsPage: React.FC = () => {
                         <div className="space-y-4">
                            <ToggleField id="USE_OBV_VALIDATION" label="Confirmation par Volume (OBV 1m)" />
                            <ToggleField id="USE_MTF_VALIDATION" label="Validation Multi-Temporelle (5m)" />
+                           <hr className="border-gray-700"/>
+                           <ToggleField id="USE_CVD_FILTER" label="Confirmation d'Agressivité (CVD 1m)" />
                            <hr className="border-gray-700"/>
                            <ToggleField id="USE_OBV_5M_VALIDATION" label="Validation OBV Multi-Échelles (5m)" />
                            <hr className="border-gray-700"/>
