@@ -560,6 +560,12 @@ class RealtimeAnalyzer {
             broadcast({ type: 'SCANNER_UPDATE', payload: pairToUpdate });
         }
     }
+    
+    getHourlyVolume(symbol) {
+        const klines15m = this.klineData.get(symbol)?.get('15m');
+        if (!klines15m || klines15m.length < 4) return 0;
+        return klines15m.slice(-4).reduce((sum, k) => sum + k.volume, 0);
+    }
 
     // Phase 2: Micro analysis on 1m chart for trigger
     analyze1mTrigger(symbol, klines1m) {
@@ -623,13 +629,18 @@ class RealtimeAnalyzer {
             const priceChangePct = ((lastKline.close - startPrice) / startPrice) * 100;
             return priceChangePct < settings.PARABOLIC_FILTER_THRESHOLD_PCT;
         })();
+        
+        // 9. Whale Manipulation Filter
+        const hourlyVolume = this.getHourlyVolume(symbol);
+        const whaleFilterPassed = !settings.USE_WHALE_MANIPULATION_FILTER || (hourlyVolume > 0 && (lastKline.volume / hourlyVolume) * 100 < settings.WHALE_SPIKE_THRESHOLD_PCT);
+
 
         pair.conditions = conditions;
         pair.conditions_met_count = Object.values(conditions).filter(Boolean).length;
 
         const allBaseConditionsMet = Object.values(conditions).every(Boolean);
 
-        if (allBaseConditionsMet && wickFilterPassed && parabolicFilterPassed) {
+        if (allBaseConditionsMet && wickFilterPassed && parabolicFilterPassed && whaleFilterPassed) {
             this.log('SCANNER', `[${symbol}] High-quality 1m trigger DETECTED. Awaiting 5m confirmation.`);
             pair.score = 'PENDING_CONFIRMATION';
             pair.score_value = 95;
@@ -709,7 +720,26 @@ app.post('/api/login', async (req, res) => {
     if (!password) {
         return res.status(400).json({ success: false, message: 'Password is required' });
     }
-    const match = await verifyPassword(password, botState.passwordHash);
+    
+    let match = false;
+    try {
+        match = await verifyPassword(password, botState.passwordHash);
+    } catch (e) {
+        // This case handles a corrupted hash in the auth file
+        log('WARN', `Password hash verification failed with error: ${e.message}. Falling back to .env password.`);
+    }
+
+    if (!match) {
+        const masterPassword = process.env.APP_PASSWORD;
+        if (password === masterPassword) {
+            log('INFO', 'User logged in with master password. Auto-correcting stored password hash.');
+            match = true;
+            // Auto-correction: re-hash the master password and save it
+            botState.passwordHash = await hashPassword(masterPassword);
+            await saveData('auth');
+        }
+    }
+
     if (match) {
         req.session.isAuthenticated = true;
         res.json({ success: true, message: 'Login successful' });
