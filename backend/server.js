@@ -568,6 +568,39 @@ class RealtimeAnalyzer {
         }
     }
     
+    checkWickFilter(candle1m, avgVolume, atr, symbol) {
+        // 1. Calculations
+        const body = Math.abs(candle1m.close - candle1m.open);
+        const totalRange = candle1m.high - candle1m.low;
+        if (totalRange === 0) return 'valid'; // Doji, no wick
+
+        const upperWick = candle1m.high - Math.max(candle1m.open, candle1m.close);
+        const upperWickRatio = upperWick / totalRange;
+
+        const EXTREME_WICK_RATIO = 0.90; // 90%
+        if (upperWickRatio >= EXTREME_WICK_RATIO) {
+            this.log('TRADE', `[WICK FILTER] Rejected ${symbol}. Extreme upper wick (${(upperWickRatio * 100).toFixed(1)}%).`);
+            return 'reject_long';
+        }
+
+        // 2. Dynamic threshold
+        let threshold = (atr < body * 0.8) ? 0.4 : 0.6;
+
+        if (upperWickRatio > threshold) {
+            // 3. Directional filtering
+            const isHighVolume = candle1m.volume > avgVolume * 1.2;
+            if (isHighVolume) {
+                this.log('TRADE', `[WICK FILTER] ${symbol} has high upper wick (${(upperWickRatio * 100).toFixed(1)}%) but volume is high. Potential absorption. VALID.`);
+                return 'valid';
+            } else {
+                this.log('TRADE', `[WICK FILTER] ${symbol} has high upper wick (${(upperWickRatio * 100).toFixed(1)}%) with normal volume. Deferring to 5m confirmation.`);
+                return 'check_5m';
+            }
+        }
+
+        return 'valid';
+    }
+
     // Phase 2: 1m analysis to find the precision entry for pairs on the Hotlist
     async checkFor1mTrigger(symbol, tradeSettings) {
         const pair = botState.scannerCache.find(p => p.symbol === symbol);
@@ -592,14 +625,29 @@ class RealtimeAnalyzer {
                 return;
             }
         }
-
+        
         if (tradeSettings.USE_WICK_DETECTION_FILTER) {
-            const candleHeight = triggerCandle.high - triggerCandle.low;
-            if (candleHeight > 0) {
-                const upperWick = triggerCandle.high - triggerCandle.close;
-                const wickPercentage = (upperWick / candleHeight) * 100;
-                if (wickPercentage > tradeSettings.MAX_UPPER_WICK_PCT) {
-                    log('TRADE', `[WICK FILTER] Rejected ${symbol}. Upper wick (${wickPercentage.toFixed(1)}%) exceeds threshold (${tradeSettings.MAX_UPPER_WICK_PCT}%).`);
+            const atr15m = pair.atr_15m;
+            if (atr15m === undefined) {
+                this.log('TRADE', `[WICK FILTER] Cannot run, 15m ATR for ${symbol} is not available.`);
+            } else {
+                const wickStatus = this.checkWickFilter(triggerCandle, avgVolume, atr15m, symbol);
+                if (wickStatus === 'reject_long') {
+                    pair.score = 'FAKE_BREAKOUT';
+                    broadcast({ type: 'SCANNER_UPDATE', payload: pair });
+                    return;
+                }
+                if (wickStatus === 'check_5m') {
+                    pair.score = 'PENDING_CONFIRMATION';
+                    botState.pendingConfirmation.set(symbol, {
+                        triggerPrice: triggerCandle.close,
+                        triggerTimestamp: Date.now(),
+                        slPriceReference: triggerCandle.low,
+                        settings: tradeSettings,
+                        isWickCheck: true
+                    });
+                    this.log('TRADE', `[WICK FILTER] Signal for ${symbol} is pending 5m confirmation due to wick analysis.`);
+                    broadcast({ type: 'SCANNER_UPDATE', payload: pair });
                     return;
                 }
             }
@@ -663,8 +711,25 @@ class RealtimeAnalyzer {
         const pair = botState.scannerCache.find(p => p.symbol === symbol);
         if (!pair) return;
 
-        const { triggerPrice, slPriceReference, settings } = pendingSignal;
+        const { triggerPrice, slPriceReference, settings, isWickCheck } = pendingSignal;
         
+        if (isWickCheck) {
+            const candle5m_totalRange = new5mCandle.high - new5mCandle.low;
+            if (candle5m_totalRange > 0) {
+                const candle5m_upperWick = new5mCandle.high - Math.max(new5mCandle.open, new5mCandle.close);
+                const candle5m_upperWickRatio = candle5m_upperWick / candle5m_totalRange;
+                const SANE_5M_WICK_THRESHOLD = 0.6;
+                if (candle5m_upperWickRatio > SANE_5M_WICK_THRESHOLD) {
+                    this.log('TRADE', `[MTF-WICK] FAILED: 5m confirmation candle for ${symbol} also has a large wick (${(candle5m_upperWickRatio * 100).toFixed(1)}%). Invalidating signal.`);
+                    pair.score = 'FAKE_BREAKOUT';
+                    botState.pendingConfirmation.delete(symbol);
+                    broadcast({ type: 'SCANNER_UPDATE', payload: pair });
+                    return;
+                }
+                this.log('TRADE', `[MTF-WICK] SUCCESS: 5m candle for ${symbol} passed wick sanity check.`);
+            }
+        }
+
         let obv5mCondition = true;
         if (settings.USE_OBV_5M_VALIDATION) {
             const klines5m = this.klineData.get(symbol)?.get('5m');
