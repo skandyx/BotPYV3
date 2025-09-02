@@ -29,6 +29,8 @@ export interface FearAndGreed {
     classification: string;
 }
 
+export type StrategyType = 'PRECISION' | 'MOMENTUM';
+
 export interface Trade {
   id: number;
   mode: TradingMode;
@@ -62,6 +64,7 @@ export interface Trade {
   current_entry_count?: number;
   total_entries?: number;
   scaling_in_percents?: number[]; // For flexible scaling in
+  strategy_type?: StrategyType; // New: Which strategy triggered the trade
 }
 
 export interface StrategyConditions {
@@ -74,6 +77,9 @@ export interface StrategyConditions {
     obv?: boolean; // 1m OBV
     rsi_mtf?: boolean; // New: 15m RSI safety check
     cvd_5m_trending_up?: boolean; // New: 5m Cumulative Volume Delta
+    // --- Momentum Strategy Specific ---
+    momentum_impulse?: boolean; // 15m impulse candle
+    momentum_confirmation?: boolean; // 5m follow-through
 }
 
 export interface ScannedPair {
@@ -94,12 +100,13 @@ export interface ScannedPair {
     atr_pct_15m?: number; // For dynamic profile selection (volatility)
     
     // --- Realtime Calculated Fields ---
-    score: 'STRONG BUY' | 'BUY' | 'HOLD' | 'COOLDOWN' | 'COMPRESSION' | 'FAKE_BREAKOUT' | 'PENDING_CONFIRMATION';
+    score: 'STRONG BUY' | 'BUY' | 'HOLD' | 'COOLDOWN' | 'COMPRESSION' | 'FAKE_BREAKOUT' | 'PENDING_CONFIRMATION' | 'MOMENTUM_BUY';
     score_value?: number; // Numerical representation of the score
     trend_score?: number; // Nuanced score of trend strength (0-100)
     conditions?: StrategyConditions;
     conditions_met_count?: number; // From 0 to 8
     is_on_hotlist?: boolean; // New: True if conditions are met for 1m precision entry
+    strategy_type?: StrategyType; // New: Which strategy is flagging this pair
 }
 
 
@@ -154,6 +161,9 @@ export interface BotSettings {
     // API Credentials
     BINANCE_API_KEY: string;
     BINANCE_SECRET_KEY: string;
+
+    // --- NEW: CORE STRATEGY SELECTOR ---
+    USE_MOMENTUM_STRATEGY: boolean; // if true, use Momentum Hunter; if false, use Precision Hunter.
 
     // --- ADVANCED STRATEGY & RISK MANAGEMENT ---
     // ATR Stop Loss

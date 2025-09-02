@@ -9,7 +9,7 @@ import TradingViewWidget from '../components/common/TradingViewWidget';
 
 
 // --- TYPE DEFINITIONS ---
-type SortableKeys = 'symbol' | 'entry_time' | 'exit_time' | 'pnl' | 'pnl_pct' | 'entry_price' | 'exit_price' | 'stop_loss' | 'take_profit';
+type SortableKeys = 'symbol' | 'entry_time' | 'exit_time' | 'pnl' | 'pnl_pct' | 'entry_price' | 'exit_price' | 'stop_loss' | 'take_profit' | 'strategy_type';
 type SortDirection = 'asc' | 'desc';
 
 interface SortConfig {
@@ -36,6 +36,7 @@ const getScoreBadgeClass = (score: ScannedPair['score'] | undefined) => {
     if (!score) return 'bg-gray-700 text-gray-200';
     switch (score) {
         case 'STRONG BUY': return 'bg-green-600 text-green-100';
+        case 'MOMENTUM_BUY': return 'bg-orange-500 text-orange-100';
         case 'BUY': return 'bg-green-800 text-green-200';
         case 'HOLD': return 'bg-gray-700 text-gray-200';
         case 'COOLDOWN': return 'bg-blue-800 text-blue-200';
@@ -146,11 +147,12 @@ const HistoryPage: React.FC = () => {
         return;
     }
 
-    const headers = ['ID', 'Symbole', 'Côté', 'Mode', 'Heure d\'Entrée', 'Heure de Sortie', 'Prix d\'Entrée', 'Prix de Sortie', 'Stop Loss', 'Take Profit', 'Quantité', 'PnL ($)', 'PnL %', 'Score Entrée', 'Tendance 4h (EMA50)', 'RSI 1h Entrée'];
+    const headers = ['ID', 'Symbole', 'Stratégie', 'Côté', 'Mode', 'Heure d\'Entrée', 'Heure de Sortie', 'Prix d\'Entrée', 'Prix de Sortie', 'Stop Loss', 'Take Profit', 'Quantité', 'PnL ($)', 'PnL %', 'Score Entrée', 'Tendance 4h (EMA50)', 'RSI 1h Entrée'];
     
     const rows = filteredAndSortedTrades.map(trade => [
         trade.id,
         `"${trade.symbol}"`,
+        trade.strategy_type || 'PRECISION',
         trade.side,
         trade.mode,
         `"${trade.entry_time}"`,
@@ -192,7 +194,7 @@ const HistoryPage: React.FC = () => {
   }
 
   const { totalPnl, winningTrades, losingTrades, winRate } = summaryStats;
-  const totalColumns = 13;
+  const totalColumns = 14;
 
   return (
     <div className="space-y-6">
@@ -278,6 +280,7 @@ const HistoryPage: React.FC = () => {
                 <thead className="bg-[#14181f] sticky top-0">
                     <tr>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="symbol">Symbole</SortableHeader>
+                        <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="strategy_type">Stratégie</SortableHeader>
                         <th scope="col" className="px-3 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Côté</th>
                         <th scope="col" className="px-3 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Score Entrée</th>
                         <th scope="col" className="px-3 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Tendance 4h (EMA50)</th>
@@ -300,6 +303,11 @@ const HistoryPage: React.FC = () => {
                             className="hover:bg-[#2b2f38]/50 cursor-pointer transition-colors"
                         >
                             <td className="px-3 lg:px-6 py-4 whitespace-nowrap text-sm font-medium text-white">{trade.symbol}</td>
+                            <td className="px-3 lg:px-6 py-4 whitespace-nowrap text-sm text-center">
+                                <span className="text-xl" title={trade.strategy_type === 'MOMENTUM' ? 'Momentum' : 'Précision'}>
+                                    {trade.strategy_type === 'MOMENTUM' ? '🔥' : '🎯'}
+                                </span>
+                            </td>
                             <td className={`px-3 lg:px-6 py-4 whitespace-nowrap text-sm font-bold ${getSideClass(trade.side)}`}>{trade.side}</td>
                             <td className="px-3 lg:px-6 py-4 whitespace-nowrap text-sm">
                                 <span className={`px-2.5 py-1 text-xs font-semibold rounded-full ${getScoreBadgeClass(trade.entry_snapshot?.score)}`}>
@@ -317,12 +325,12 @@ const HistoryPage: React.FC = () => {
                             <td className="px-3 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-300">${formatPrice(trade.stop_loss)}</td>
                             <td className="px-3 lg:px-6 py-4 whitespace-nowrap text-sm text-gray-300">${formatPrice(trade.take_profit)}</td>
                             <td className={`px-3 lg:px-6 py-4 whitespace-nowrap text-sm font-medium ${getPnlClass(trade.pnl)}`}>${trade.pnl?.toFixed(2) || 'N/A'}</td>
-                            <td className={`px-3 lg:px-6 py-4 whitespace-nowrap text-sm font-medium ${getPnlClass(trade.pnl_pct)}`}>{trade.pnl_pct?.toFixed(2) || 'N/A'}%</td>
+                            <td className={`px-3 lg:px-6 py-4 whitespace-nowrap text-sm font-medium ${getPnlClass(trade.pnl_pct)}`}>${trade.pnl_pct?.toFixed(2) || 'N/A'}%</td>
                         </tr>
                     ))}
                      {filteredAndSortedTrades.length === 0 && (
                         <tr>
-                            <td colSpan={totalColumns} className="text-center py-10 text-gray-500">
+                            <td colSpan={totalColumns + 1} className="text-center py-10 text-gray-500">
                                 Aucun trade trouvé pour le filtre actuel.
                             </td>
                         </tr>

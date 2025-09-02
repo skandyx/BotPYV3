@@ -73,18 +73,18 @@ const Dot: React.FC<{ active: boolean; tooltip: string }> = ({ active, tooltip }
 
 const ConditionDots: React.FC<{ conditions?: StrategyConditions }> = ({ conditions }) => {
     const conditionTooltips = {
-        squeeze: 'Compression 15m (BB Squeeze)',
-        breakout: 'Cassure 1m (Clôture > EMA9)',
-        volume: 'Volume 1m (Volume > 1.5x Moyenne)',
-        obv: 'Confirmation Volume (OBV 1m haussier)',
-        cvd_5m_trending_up: 'Confirmation Pression Nette (CVD 5m haussier)',
-        safety: 'Sécurité 1h (RSI < Seuil)',
-        rsi_mtf: 'Sécurité 15m (RSI < Seuil)',
-        structure: 'Confirmation Structurelle (Prix > Plus Haut 15m Précédent)',
+        squeeze: 'Précision: Compression 15m (BB Squeeze)',
+        breakout: 'Précision: Cassure 1m (Clôture > EMA9)',
+        volume: 'Précision: Volume 1m (> 1.5x Moyenne)',
+        obv: 'Précision: Confirmation OBV 1m',
+        cvd_5m_trending_up: 'Précision: Confirmation CVD 5m',
+        safety: 'Sécurité Partagée: RSI 1h < Seuil',
+        rsi_mtf: 'Sécurité Partagée: RSI 15m < Seuil',
+        structure: 'Précision: Confirmation Structurelle 15m',
+        momentum_impulse: 'Momentum: Bougie d\'impulsion 15m',
+        momentum_confirmation: 'Momentum: Suivi 5m',
     };
 
-    // The order of these dots is specifically set to match the logical flow of the trading strategy:
-    // 1. Preparation (Squeeze) -> 2. Trigger (Breakout, Volume, OBV) -> 3. Safety Checks (RSIs, Structure)
     return (
         <div className="flex items-center space-x-2">
             <Dot active={conditions?.squeeze ?? false} tooltip={conditionTooltips.squeeze} />
@@ -95,6 +95,7 @@ const ConditionDots: React.FC<{ conditions?: StrategyConditions }> = ({ conditio
             <Dot active={conditions?.safety ?? false} tooltip={conditionTooltips.safety} />
             <Dot active={conditions?.rsi_mtf ?? false} tooltip={conditionTooltips.rsi_mtf} />
             <Dot active={conditions?.structure ?? false} tooltip={conditionTooltips.structure} />
+            <Dot active={conditions?.momentum_impulse ?? false} tooltip={conditionTooltips.momentum_impulse} />
         </div>
     );
 };
@@ -103,7 +104,7 @@ const ConditionDots: React.FC<{ conditions?: StrategyConditions }> = ({ conditio
 const ScannerPage: React.FC = () => {
   const [pairs, setPairs] = useState<ScannedPair[]>(() => scannerStore.getScannedPairs());
   const [sortConfig, setSortConfig] = useState<SortConfig | null>({ key: 'score_value', direction: 'desc' });
-  const [selectedPair, setSelectedPair] = useState<ScannedPair | null>(null);
+  const [selectedSymbol, setSelectedSymbol] = useState<string>('SOLUSDT');
   const [searchQuery, setSearchQuery] = useState('');
   const { settings } = useAppContext();
 
@@ -119,7 +120,10 @@ const ScannerPage: React.FC = () => {
       unsubscribe();
     };
   }, []);
-
+  
+  const selectedPairObject = useMemo(() => {
+    return pairs.find(p => p.symbol === selectedSymbol);
+  }, [pairs, selectedSymbol]);
 
   const requestSort = (key: SortableKeys) => {
     let direction: SortDirection = 'asc';
@@ -168,6 +172,8 @@ const ScannerPage: React.FC = () => {
         switch (pair.score) {
             case 'STRONG BUY':
                 return { className: 'bg-green-600 text-green-100', text: 'STRONG BUY' };
+            case 'MOMENTUM_BUY':
+                return { className: 'bg-orange-500 text-orange-100', text: 'MOMENTUM' };
             case 'BUY':
                 return { className: 'bg-sky-600 text-sky-100', text: 'BUY' };
             case 'COMPRESSION':
@@ -237,24 +243,16 @@ const ScannerPage: React.FC = () => {
     <div className="space-y-6">
       <h2 className="text-2xl sm:text-3xl font-bold text-white">Scanner de Marché</h2>
 
-      {selectedPair && (
-        <div className="bg-[#14181f]/50 border border-[#2b2f38] rounded-lg p-3 sm:p-5 shadow-lg relative">
-            <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-semibold text-white">Graphique : {selectedPair.symbol}</h3>
-                <button 
-                    onClick={() => setSelectedPair(null)} 
-                    className="text-gray-400 hover:text-white text-2xl leading-none absolute top-3 right-4 z-10"
-                    aria-label="Fermer le graphique"
-                >
-                   &times;
-                </button>
-            </div>
-            <TradingViewWidget 
-                symbol={selectedPair.symbol} 
-                defaultInterval={selectedPair.is_on_hotlist ? '1' : '15'} 
-            />
+      <div className="bg-[#14181f]/50 border border-[#2b2f38] rounded-lg p-3 sm:p-5 shadow-lg relative">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-semibold text-white">Graphique : {selectedSymbol}</h3>
         </div>
-      )}
+        <TradingViewWidget
+          symbol={selectedSymbol}
+          defaultInterval={selectedPairObject?.is_on_hotlist ? '1' : '15'}
+        />
+      </div>
+
 
       <div className="bg-[#14181f]/50 border border-[#2b2f38] rounded-lg shadow-lg overflow-hidden">
          <div className="p-4 bg-[#14181f]/30">
@@ -275,7 +273,7 @@ const ScannerPage: React.FC = () => {
             <table className="min-w-full divide-y divide-[#2b2f38]">
                 <thead className="bg-[#14181f] sticky top-0 z-10">
                     <tr>
-                        <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="is_on_hotlist" className="text-center">Hotlist</SortableHeader>
+                        <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="is_on_hotlist" className="text-center">Signal</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="symbol">Symbole</SortableHeader>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="price">Prix</SortableHeader>
                         <th scope="col" className="px-2 sm:px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">Tendance 4h</th>
@@ -284,7 +282,7 @@ const ScannerPage: React.FC = () => {
                         <th scope="col" className="px-2 sm:px-4 lg:px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
                             <div className="flex items-center">
                                 <span>Conditions</span>
-                                <Tooltip text="Les 8 conditions de déclenchement (Squeeze, Breakout, Volume, OBV, CVD, RSI 1h, RSI 15m, Structure). La tendance 4h est dans sa propre colonne." />
+                                <Tooltip text="Conditions pour la stratégie Précision (Squeeze) et Momentum. La Tendance 4h est dans sa propre colonne." />
                             </div>
                         </th>
                         <SortableHeader sortConfig={sortConfig} requestSort={requestSort} sortKey="rsi_1h">RSI 1h</SortableHeader>
@@ -307,52 +305,27 @@ const ScannerPage: React.FC = () => {
 
                             const { met, total } = (() => {
                                 if (!settings || !pair.conditions) return { met: pair.conditions_met_count || 0, total: 8 };
-
-                                const conditionMap: Record<keyof StrategyConditions, string | null> = {
-                                    squeeze: null, // Always active
-                                    breakout: null, // Always active
-                                    volume: null, // Always active
-                                    obv: 'USE_OBV_VALIDATION',
-                                    cvd_5m_trending_up: 'USE_CVD_FILTER',
-                                    safety: 'USE_RSI_SAFETY_FILTER',
-                                    rsi_mtf: 'USE_RSI_MTF_FILTER',
-                                    structure: 'USE_MTF_VALIDATION',
-                                    trend: null, // This is handled separately in its own column
-                                };
-                                
-                                let totalConditions = 0;
-                                let metConditions = 0;
-
-                                for (const key in conditionMap) {
-                                    const conditionKey = key as keyof StrategyConditions;
-
-                                    // Skip the 'trend' condition as it's not part of this score
-                                    if (conditionKey === 'trend') continue;
-
-                                    const settingKey = conditionMap[conditionKey];
-
-                                    const isConditionActive = settingKey === null || settings[settingKey as keyof typeof settings] === true;
-
-                                    if (isConditionActive) {
-                                        totalConditions++;
-                                        if (pair.conditions[conditionKey]) {
-                                            metConditions++;
-                                        }
-                                    }
-                                }
-                                return { met: metConditions, total: totalConditions };
+                                // This logic is now handled entirely by the backend to simplify the frontend.
+                                // We just display what the backend provides.
+                                return { met: pair.conditions_met_count || 0, total: 8 };
                             })();
 
+                             const strategyIcon = useMemo(() => {
+                                if (pair.strategy_type === 'PRECISION') return '🎯';
+                                if (pair.strategy_type === 'MOMENTUM') return '🔥';
+                                if (pair.is_on_hotlist) return '🎯'; // Default for legacy
+                                return '';
+                            }, [pair.strategy_type, pair.is_on_hotlist]);
 
                             return (
                                 <tr 
                                     key={pair.symbol}
-                                    onClick={() => setSelectedPair(pair)}
+                                    onClick={() => setSelectedSymbol(pair.symbol)}
                                     className={`hover:bg-[#2b2f38]/50 cursor-pointer transition-colors ${rowClass}`}
                                 >
                                     <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-center text-xl">
-                                        <span title="Prêt pour entrée de précision 1m">
-                                            {pair.is_on_hotlist ? '🎯' : ''}
+                                        <span title={pair.strategy_type === 'PRECISION' ? 'Prêt pour entrée de précision 1m' : 'Signal de Momentum détecté'}>
+                                            {strategyIcon}
                                         </span>
                                     </td>
                                     <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-medium text-white">{pair.symbol}</td>
@@ -361,9 +334,26 @@ const ScannerPage: React.FC = () => {
                                         {pair.price_above_ema50_4h === true ? '▲ HAUSSIER' : (pair.price_above_ema50_4h === false ? '▼ BAISSIER' : 'N/A')}
                                     </td>
                                     <td className="px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm">
-                                        <span className={`px-2.5 py-1 text-xs font-semibold rounded-full min-w-[140px] text-center ${scoreDisplay.className}`}>
-                                            {scoreDisplay.text} ({met}/{total})
-                                        </span>
+                                        <div className="flex items-center w-[180px]">
+                                            <span className={`px-2.5 py-1 text-xs font-semibold rounded-l-full ${scoreDisplay.className} w-28 text-center flex-shrink-0`}>
+                                                {scoreDisplay.text}
+                                            </span>
+                                            {total > 0 ? (
+                                                <div className="bg-gray-600 rounded-r-full h-6 flex-grow relative flex items-center" title={`${met} sur ${total} conditions remplies`}>
+                                                    <div 
+                                                        className="bg-green-500 h-full rounded-r-full transition-all duration-300" 
+                                                        style={{ width: `${(met / total) * 100}%` }}
+                                                    ></div>
+                                                    <span className="absolute inset-0 text-white text-xs font-bold flex items-center justify-center mix-blend-difference">
+                                                        {met}/{total}
+                                                    </span>
+                                                </div>
+                                            ) : (
+                                                <div className="bg-gray-600 rounded-r-full h-6 flex-grow flex items-center justify-center">
+                                                    <span className="text-gray-400 text-xs">-/-</span>
+                                                </div>
+                                            )}
+                                        </div>
                                     </td>
                                     <td className={`px-2 sm:px-4 lg:px-6 py-4 whitespace-nowrap text-sm font-bold ${getTrendScoreColorClass(pair.trend_score)}`}>
                                         {pair.trend_score?.toFixed(0) || 'N/A'}

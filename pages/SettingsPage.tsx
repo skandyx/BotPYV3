@@ -86,6 +86,7 @@ const settingProfiles: Record<ProfileName, Partial<BotSettings>> = {
 
 // --- HELPERS ---
 const tooltips: Record<string, string> = {
+    USE_MOMENTUM_STRATEGY: "Choisit la logique de détection des signaux. 'Précision' recherche des compressions de volatilité avant un breakout. 'Momentum' recherche des bougies d'impulsion avec un volume élevé dans une tendance déjà établie.",
     INITIAL_VIRTUAL_BALANCE: "Le capital de départ pour votre compte de trading virtuel. Ce montant est appliqué lorsque vous effacez toutes les données de trading.",
     MAX_OPEN_POSITIONS: "Le nombre maximum de trades que le bot peut avoir ouverts en même temps. Aide à contrôler l'exposition globale au risque.",
     POSITION_SIZE_PCT: "Le pourcentage de votre solde total à utiliser pour chaque nouveau trade. (ex: 2% sur un solde de 10 000 $ se traduira par des positions de 200 $).",
@@ -367,10 +368,29 @@ const SettingsPage: React.FC = () => {
                 </div>
             </div>
             
+            {/* New Core Strategy Selector */}
+            <div className="bg-[#14181f]/50 border border-[#2b2f38] rounded-lg p-6 shadow-lg">
+                <h3 className="text-lg font-semibold text-white mb-1">Stratégie d'Entrée Principale</h3>
+                <p className="text-sm text-gray-400 mb-4">Choisissez la logique fondamentale que le bot utilisera pour détecter les opportunités de trading.</p>
+                <div className="flex items-center space-x-4 bg-[#0c0e12]/30 p-3 rounded-lg">
+                    <ToggleSwitch
+                        checked={settings.USE_MOMENTUM_STRATEGY}
+                        onChange={(checked) => handleChange('USE_MOMENTUM_STRATEGY', checked)}
+                        leftLabel="Momentum (Vitesse) 🔥"
+                        rightLabel="Précision (Squeeze) 🎯"
+                    />
+                    <label className="flex items-center text-sm font-medium text-gray-300">
+                       Chasseur de Momentum
+                        <Tooltip text={tooltips.USE_MOMENTUM_STRATEGY} />
+                    </label>
+                </div>
+            </div>
+
+
              {/* Profile Selector */}
             <div className="bg-[#14181f]/50 border border-[#2b2f38] rounded-lg p-6 shadow-lg">
                 <h3 className="text-lg font-semibold text-white mb-1">Profil de Comportement Adaptatif</h3>
-                <p className="text-sm text-gray-400 mb-4">Activez le sélecteur dynamique pour laisser le bot choisir la meilleure tactique, ou désactivez-le pour sélectionner manuellement un profil.</p>
+                <p className="text-sm text-gray-400 mb-4">Activez le sélecteur dynamique pour laisser le bot choisir la meilleure tactique de sortie, ou désactivez-le pour sélectionner manuellement un profil de gestion.</p>
                 <div className="flex items-center space-x-4 mb-4 bg-[#0c0e12]/30 p-3 rounded-lg">
                     <ToggleSwitch
                         checked={settings.USE_DYNAMIC_PROFILE_SELECTOR}
