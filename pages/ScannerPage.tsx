@@ -105,7 +105,7 @@ const ConditionDots: React.FC<{ conditions?: StrategyConditions }> = ({ conditio
 const ScannerPage: React.FC = () => {
   const [pairs, setPairs] = useState<ScannedPair[]>(() => scannerStore.getScannedPairs());
   const [sortConfig, setSortConfig] = useState<SortConfig | null>({ key: 'score_value', direction: 'desc' });
-  const [selectedSymbol, setSelectedSymbol] = useState<string | null>('SOLUSDT');
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const { settings } = useAppContext();
 
