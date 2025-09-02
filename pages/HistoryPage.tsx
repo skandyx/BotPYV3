@@ -192,7 +192,7 @@ const HistoryPage: React.FC = () => {
   }
 
   const { totalPnl, winningTrades, losingTrades, winRate } = summaryStats;
-  const totalColumns = 14;
+  const totalColumns = 13;
 
   return (
     <div className="space-y-6">

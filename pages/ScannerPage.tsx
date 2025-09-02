@@ -9,7 +9,7 @@ import { SearchIcon } from '../components/icons/Icons';
 import Tooltip from '../components/common/Tooltip';
 
 
-type SortableKeys = keyof ScannedPair | 'vol_spike'; // Add custom sort key
+type SortableKeys = keyof ScannedPair;
 type SortDirection = 'asc' | 'desc';
 
 interface SortConfig {
@@ -144,9 +144,6 @@ const ScannerPage: React.FC = () => {
         if (key === 'bollinger_bands_15m') {
             aVal = a.bollinger_bands_15m?.width_pct;
             bVal = b.bollinger_bands_15m?.width_pct;
-        } else if (key === 'vol_spike') {
-            aVal = a.conditions?.volume ?? false;
-            bVal = b.conditions?.volume ?? false;
         } else {
             aVal = a[key as keyof ScannedPair];
             bVal = b[key as keyof ScannedPair];
